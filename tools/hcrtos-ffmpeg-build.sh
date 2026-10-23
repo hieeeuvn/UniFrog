@@ -166,6 +166,7 @@ set -- "$@" \
 	--enable-bsf=h264_mp4toannexb \
 	--disable-protocols \
 	--enable-protocol=file \
+	--host-cc="${HOSTCC:-gcc}" \
 	--extra-cflags="-EL $ARCH_CFLAGS $OPT_SIZE -msoft-float -fsigned-char -ffunction-sections -fdata-sections -G0 ${HCRTOS_FFMPEG_WARN_CFLAGS:-} ${HCRTOS_FFMPEG_ABI_CFLAGS:-} -D_FORTIFY_SOURCE=0 -D__HCRTOS__ -DSOC_HC15XX -DSF2000 -I$PWD/$compat_dir -I$SDK_ABS/include/newlib -I$SDK_ABS/include/kernel/lib -I$SDK_ABS/include" \
 	--extra-ldflags="-EL -L$SDK_ABS/lib/core" \
 	--extra-libs="-lz -lc -lm -lgcc"

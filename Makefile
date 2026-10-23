@@ -97,6 +97,7 @@ OPT_AUDIO ?= -Os
 FOUNDATION_CFLAGS ?=
 FRONTEND_CFLAGS ?=
 LIBRETRO_CFLAGS ?=
+ACHIEVEMENTS_CFLAGS ?=
 MEDIA_CFLAGS ?=
 DIAGNOSTICS_CFLAGS ?=
 
@@ -409,6 +410,19 @@ LVGL_FONT_OBJECTS := \
 	$(BUILD)/lvgl/extra/libs/fsdrv/lv_fs_stdio.o
 UNIFROG_OBJECTS += $(LVGL_FONT_OBJECTS)
 
+# rcheevos is built from its pinned upstream tag. Only the pieces the offline
+# achievement engine needs are compiled: runtime, API response parsers, and
+# the ROM hash helpers. Third-party code is built warning-free.
+RCHEEVOS_OBJECTS := $(addprefix $(BUILD)/rcheevos/, \
+	rc_compat.o rc_libretro.o rc_util.o rc_version.o \
+	rc_api_common.o rc_api_runtime.o \
+	aes.o cdreader.o hash.o hash_disc.o hash_encrypted.o hash_rom.o \
+	hash_zip.o md5.o \
+	alloc.o condition.o condset.o consoleinfo.o format.o lboard.o \
+	memref.o operand.o richpresence.o runtime.o runtime_progress.o \
+	trigger.o value.o)
+LIBRCHEEVOS := $(OUT)/librcheevos.a
+
 LIBUNIFROG := $(OUT)/libunifrog.a
 FRONTEND_COMPONENT_OBJECTS := \
 	$(FRONTEND_RUNTIME_OBJECTS) \
@@ -671,6 +685,7 @@ HCRTOS_FFMPEG_CONFIGURE_LOG := $(BUILD)/logs/hcrtos-ffmpeg-configure.log
 HCRTOS_FFMPEG_BUILD_LOG := $(BUILD)/logs/hcrtos-ffmpeg-build.log
 HCRTOS_FFMPEG_INSTALL_LOG := $(BUILD)/logs/hcrtos-ffmpeg-install.log
 JS2300_FETCH_STAMP := $(JS2300)/.unifrog-js2300-$(JS2300_BRANCH)-$(JS2300_REF)
+RCHEEVOS_FETCH_STAMP := $(RCHEEVOS_DIR)/.unifrog-rcheevos-$(RCHEEVOS_REF)
 HCRTOS_FFMPEG_SOURCE_TOKEN := $(shell { \
 	printf '%s\n' 'DEP_DEPTH=$(DEP_DEPTH)' \
 		'HCRTOS_FFMPEG_URL=$(HCRTOS_FFMPEG_URL)' \
@@ -796,7 +811,7 @@ $(BUILD_IDENTITY_OBJECTS): $(BUILD_IDENTITY_STAMP)
 	core core-archive core-out ffmpeg config-check host-check host-visual-check host-frontend-check \
 	host-frontend-run linux-runner linux-run linux-runner-check \
 	core-registry-check frontend-model-check frontend-structure-check core-manifest-check \
-	deps-alpine deps-ubuntu deps-sdk deps-js2300 deps-support deps-cores deps-core-smoke deps-lvgl deps-ffmpeg \
+	deps-alpine deps-ubuntu deps-sdk deps-js2300 deps-support deps-cores deps-core-smoke deps-lvgl deps-rcheevos deps-ffmpeg \
 	frontend-package core-package module-package sdcard-package sd-zip install refresh-sd refresh-sd-clean \
 	bluemsx-system \
 	asdcheck fastboot-check fastboot-only-check layout-check firmware-link-check boot-logo-check js2300-check frontend-check \
@@ -863,8 +878,8 @@ qemu-launch-test: qemu-build $(ASD)
 		CORE="$(TEST_CORE)" ROM="$(TEST_ROM)" \
 		FRAMES="$(TEST_FRAMES)"
 setup: deps ci-toolchain
-setup-min: deps-sdk deps-js2300 deps-lvgl deps-ffmpeg ffmpeg deps-support ci-toolchain
-setup-cores: deps-sdk deps-js2300 deps-lvgl deps-ffmpeg ffmpeg deps-cores ci-toolchain
+setup-min: deps-sdk deps-js2300 deps-lvgl deps-rcheevos deps-ffmpeg ffmpeg deps-support ci-toolchain
+setup-cores: deps-sdk deps-js2300 deps-lvgl deps-rcheevos deps-ffmpeg ffmpeg deps-cores ci-toolchain
 
 include mk/agent.mk
 
@@ -901,7 +916,7 @@ core-archive: $($(SELECTED_CORE_VAR)_CORE_LIB)
 
 core-out: $($(SELECTED_CORE_VAR)_CORE_OUT)
 endif
-deps: deps-sdk deps-js2300 deps-lvgl deps-cores deps-ffmpeg ffmpeg
+deps: deps-sdk deps-js2300 deps-lvgl deps-rcheevos deps-cores deps-ffmpeg ffmpeg
 
 deps-alpine:
 	apk add git make dtc tcc tcc-libs-static gcc perl musl-dev zlib-dev ccache curl tar xz zip \
@@ -934,6 +949,24 @@ $(JS2300_FETCH_STAMP):
 	test "$$(git -C "$(JS2300)" rev-parse HEAD)" = "$(JS2300_REF)"; \
 	test "$$(git -C "$(JS2300)" rev-parse FETCH_HEAD)" = "$(JS2300_REF)"; \
 	printf '%s\n' "$(JS2300_BRANCH) $(JS2300_REF)" > "$@"
+
+deps-rcheevos: $(RCHEEVOS_FETCH_STAMP)
+
+$(RCHEEVOS_FETCH_STAMP):
+	$(Q)set -eu; \
+	if test -d "$(RCHEEVOS_DIR)/.git"; then \
+		git -C "$(RCHEEVOS_DIR)" diff --quiet --ignore-submodules --; \
+		git -C "$(RCHEEVOS_DIR)" diff --cached --quiet --; \
+	else \
+		test ! -e "$(RCHEEVOS_DIR)" || { echo "dependency path exists but is not a git checkout: $(RCHEEVOS_DIR)" >&2; exit 1; }; \
+		mkdir -p "$(dir $(RCHEEVOS_DIR))"; \
+		git clone --filter=blob:none --no-checkout "$(RCHEEVOS_URL)" "$(RCHEEVOS_DIR)"; \
+	fi; \
+	git -C "$(RCHEEVOS_DIR)" remote set-url origin "$(RCHEEVOS_URL)"; \
+	git -C "$(RCHEEVOS_DIR)" fetch --depth=1 origin "refs/tags/$(RCHEEVOS_TAG)"; \
+	git -C "$(RCHEEVOS_DIR)" checkout --detach "$(RCHEEVOS_REF)"; \
+	test "$$(git -C "$(RCHEEVOS_DIR)" rev-parse HEAD)" = "$(RCHEEVOS_REF)"; \
+	printf '%s\n' "$(RCHEEVOS_TAG) $(RCHEEVOS_REF)" > "$@"
 
 deps-lvgl:
 	$(Q)$(call root-deps-cmd,lvgl,,setup)
@@ -1285,6 +1318,31 @@ $(BUILD)/lvgl/%.o: $(LVGL_DIR)/src/%.c | $(BUILD)
 	$(Q)mkdir -p $(dir $@)
 	$(Q)$(CC) $(CFLAGS_FAST) -w -MD -MP -c $< -o $@
 
+$(BUILD)/rcheevos/%.o: $(RCHEEVOS_DIR)/src/rcheevos/%.c | $(BUILD)
+	$(LOG_ECHO) "  CC      $<"
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CC) $(CFLAGS_FAST) -MD -MP -c $< -o $@
+
+$(BUILD)/rcheevos/%.o: $(RCHEEVOS_DIR)/src/rapi/%.c | $(BUILD)
+	$(LOG_ECHO) "  CC      $<"
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CC) $(CFLAGS_FAST) -MD -MP -c $< -o $@
+
+$(BUILD)/rcheevos/%.o: $(RCHEEVOS_DIR)/src/rhash/%.c | $(BUILD)
+	$(LOG_ECHO) "  CC      $<"
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CC) $(CFLAGS_FAST) -MD -MP -c $< -o $@
+
+$(BUILD)/rcheevos/%.o: $(RCHEEVOS_DIR)/src/%.c | $(BUILD)
+	$(LOG_ECHO) "  CC      $<"
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CC) $(CFLAGS_FAST) -MD -MP -c $< -o $@
+
+$(LIBRCHEEVOS): $(RCHEEVOS_OBJECTS) | $(OUT)
+	$(LOG_ECHO) "  AR      $@"
+	$(Q)rm -f $@
+	$(Q)$(AR) rcs $@ $(filter %.o,$^)
+
 define CORE_MODULE_RULES
 $(BUILD)/core_modules/$(1).out: $(BUILD)/core_modules/$(1)_entry.o $(BUILD)/core_modules/support.o $$($(2)_CORE_LIB) $$($(2)_CORE_SUPPORT_LIBS) $(LIBRETRO_COMMON_LIB) $(LIBUNIFROG) linker/core-module.ld linker/hc15xx/peripherals.ld $(SDK_BUILD_STAMP) $(BUILD_CONFIG_STAMP) | $(OUT)
 	$(LOG_ECHO) "  LD      $$@"
@@ -1393,6 +1451,14 @@ $(FOUNDATION_COMPONENT_OBJECTS): CFLAGS += $(FOUNDATION_CFLAGS)
 $(FRONTEND_OWNED_COMPONENT_OBJECTS): CFLAGS += -Icomponents/frontend/src/app
 $(FRONTEND_COMPONENT_OBJECTS): CFLAGS += $(FRONTEND_CFLAGS)
 $(LIBRETRO_COMPONENT_OBJECTS): CFLAGS += -Icomponents/libretro/src $(LIBRETRO_CFLAGS)
+$(BUILD)/libretro/achievements/unifrog_achievements.o: CFLAGS += \
+	-I$(RCHEEVOS_DIR)/include -I$(RCHEEVOS_DIR)/src $(ACHIEVEMENTS_CFLAGS)
+$(RCHEEVOS_OBJECTS): CFLAGS += \
+	-w -DRC_DISABLE_LUA -DRC_NO_THREADS \
+	-I$(RCHEEVOS_DIR)/include -I$(RCHEEVOS_DIR)/src \
+	-I$(RCHEEVOS_DIR)/src/rcheevos -I$(RCHEEVOS_DIR)/src/rapi \
+	-I$(RCHEEVOS_DIR)/src/rhash $(ACHIEVEMENTS_CFLAGS)
+$(RCHEEVOS_OBJECTS): $(RCHEEVOS_FETCH_STAMP)
 $(MEDIA_COMPONENT_OBJECTS): CFLAGS += -Icomponents/media/src $(MEDIA_CFLAGS)
 $(DIAGNOSTICS_COMPONENT_OBJECTS): CFLAGS += -Icomponents/diagnostics/src $(DIAGNOSTICS_CFLAGS)
 
@@ -1529,7 +1595,7 @@ $(eval $(call COMPONENT_ARCHIVE_RULE,$(LIBMEDIA_COMPONENT),$(MEDIA_COMPONENT_OBJ
 $(eval $(call COMPONENT_ARCHIVE_RULE,$(LIBDIAGNOSTICS_COMPONENT),$(DIAGNOSTICS_COMPONENT_OBJECTS)))
 
 $(OUT)/$(TARGET).out: $(APP_OBJECTS) $(FIRMWARE_COMPONENT_LIBS) $(LIBJS2300) \
-	$(LIBRETRO_COMMON_LIB) $(FIRMWARE_LIBRETRO_CORE_LIBS) \
+	$(LIBRETRO_COMMON_LIB) $(LIBRCHEEVOS) $(FIRMWARE_LIBRETRO_CORE_LIBS) \
 	$(SDK_BUILD_STAMP) $(HCRTOS_FFMPEG_STAMP) $(BUILD_CONFIG_STAMP) | $(OUT)
 	$(LOG_ECHO) "  LD      $@"
 	$(Q)$(LD) $(LDFLAGS) -o $@ -Map $@.map --start-group $(filter %.o %.a,$^) $(LDLIBS) --whole-archive $(WHOLE_LIBS) --no-whole-archive --end-group

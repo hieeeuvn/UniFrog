@@ -1,5 +1,7 @@
 #include "unifrog_libretro_internal.h"
 
+#include <unifrog/achievements.h>
+
 #ifdef UNIFROG_LIBRETRO_NATIVE_DLOPEN
 #include <dlfcn.h>
 #include <unifrog/linux_host.h>
@@ -565,6 +567,44 @@ static void host_report_perf(const char *core_id, int final)
    host.report_start_us = now_us;
 }
 
+/*
+ * Core API calls must use the MIPS call trampolines so the core's GP is
+ * selected; handing raw libretro function pointers to the achievement engine
+ * would call the core with the frontend's GP and corrupt core state.
+ */
+static const struct libretro_core_api *achievements_core_api;
+
+static void *achievements_core_memory_data(unsigned id)
+{
+   if (!achievements_core_api || !achievements_core_api->get_memory_data)
+      return NULL;
+   return CORE_CALL1_RET(achievements_core_api,
+      achievements_core_api->get_memory_data, id);
+}
+
+static size_t achievements_core_memory_size(unsigned id)
+{
+   if (!achievements_core_api || !achievements_core_api->get_memory_size)
+      return 0;
+   return CORE_CALL1_RET(achievements_core_api,
+      achievements_core_api->get_memory_size, id);
+}
+
+static void host_draw_achievement_toast(void)
+{
+   struct unifrog_surface surface;
+   unsigned buffer;
+
+   if (!host.presenter_open)
+      return;
+   buffer = host.presenter.active_buffer;
+   surface = unifrog_fb_surface_for_buffer(&host.presenter.fb, buffer);
+   if (!surface.pixels || surface.height < 52u)
+      return;
+   if (unifrog_achievements_draw_overlay(&surface) > 0)
+      unifrog_fb_flush_buffer(&host.presenter.fb, buffer);
+}
+
 static void host_draw_battery_warning(uint32_t now_ms)
 {
    struct unifrog_surface surface;
@@ -909,6 +949,15 @@ out_content_prepare:
    unifrog_diag_memory_snapshot("libretro.after_retro_load_game");
 
    /*
+    * RetroAchievements can only read core memory once the game is loaded.
+    * Hashing and cache parsing happen here so the run loop stays cheap.
+    */
+   achievements_core_api = core;
+   unifrog_achievements_set_memory_access(achievements_core_memory_data,
+      achievements_core_memory_size);
+   (void)unifrog_achievements_begin(core->id, path);
+
+   /*
     * Libretro permits AV information to depend on the loaded content.
     * Stella 2014 does so and hangs if queried before retro_load_game().
     */
@@ -1077,6 +1126,7 @@ out_content_prepare:
             core->run);
       CORE_CALL0_VOID(core, core->run);
       libretro_watchdog_leave();
+      unifrog_achievements_frame();
       (void)host_audio_flush_sample_buffer();
       if (host.launch_requested || host.shutdown_requested) {
          printf("unifrog libretro requested_return core=%s reason=%s target=%s path=%s\n",
@@ -1085,6 +1135,7 @@ out_content_prepare:
          break;
       }
       host_update_battery_warning(unifrog_perf_time_ms());
+      host_draw_achievement_toast();
       run_count = unifrog_perf_elapsed(run_start, unifrog_perf_count());
       vsync_count = host.presenter_open && host.video_frames != video_before ?
          host.presenter.last_vsync_count : 0;
@@ -1163,6 +1214,8 @@ out_content_prepare:
 out_unload:
    unifrog_diag_memory_snapshot("libretro.out_unload");
    libretro_watchdog_stop();
+   unifrog_achievements_end();
+   achievements_core_api = NULL;
    if (game_loaded) {
       libretro_activity_set(core, path, UNIFROG_ACTIVITY_PHASE_SAVE_MEMORY,
          1u);
