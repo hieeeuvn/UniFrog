@@ -50,6 +50,13 @@ at most the progress written in the last five seconds.
 
 Node 18 or newer is the only requirement; the script has no npm dependencies.
 
+If you would rather not use a terminal, `tools/ra-sync-gui` builds the same
+sync as a GUI: `UniFrog-RA-Sync.exe` for Windows (32- and 64-bit) and
+`UniFrog-RA-Sync.apk` for Android 5.0+, which picks `unifrog_data` through the
+system folder picker and stores the username and key itself, so `ra_sync.ini`
+is not needed there. See
+[tools/ra-sync-gui/README.md](../tools/ra-sync-gui/README.md).
+
 ## In-game UI
 
 The pause menu (SELECT + START) has an **Ach** tab listing the current game:
