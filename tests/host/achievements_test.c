@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <unifrog/achievements.h>
 #include <unifrog/config.h>
@@ -240,6 +241,66 @@ int main(void)
    TEST_EQ_INT(1, summary.unlocked);
    TEST_EQ_INT(1, (int)summary.pending_uploads);
    unifrog_achievements_end();
+
+   /*
+    * A card fault at unlock time must not lose the award. The id is only
+    * marked earned once its queue line is stored, and the line is retried.
+    */
+   {
+      static const uint8_t rom2[] = {
+         'N', 'E', 'S', 0x1a, 1, 1, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+      };
+      static const char cache2[] =
+         "{\"Success\":true,\"PatchData\":{"
+         "\"ID\":4343,\"Title\":\"Second Game\",\"ConsoleID\":7,"
+         "\"ImageIcon\":\"\",\"RichPresencePatch\":\"\","
+         "\"Achievements\":[{"
+         "\"ID\":222,\"Title\":\"Second Byte\","
+         "\"Description\":\"Read the first RAM byte again\","
+         "\"Flags\":3,\"Points\":10,\"MemAddr\":\"0xH0000=1\","
+         "\"Author\":\"tester\",\"BadgeName\":\"00002\","
+         "\"Created\":0,\"Modified\":0}],"
+         "\"Leaderboards\":[]}}";
+      char hash2[33];
+      char path[160];
+
+      TEST_EQ_INT(0, write_file(TEST_ROOT "/rom2.nes", rom2, sizeof(rom2)));
+      TEST_EQ_INT(1, rc_hash_generate_from_file(hash2, NES_CONSOLE,
+         TEST_ROOT "/rom2.nes"));
+      snprintf(path, sizeof(path), "%s/%s.json",
+         UNIFROG_ACHIEVEMENTS_CACHE_ROOT, hash2);
+      TEST_EQ_INT(0, write_file(path, cache2, strlen(cache2)));
+
+      /* Make the queue unwritable for everyone: a regular file, not a dir. */
+      TEST_EQ_INT(0, system("rm -rf " UNIFROG_ACHIEVEMENTS_QUEUE_ROOT));
+      TEST_EQ_INT(0, write_file(UNIFROG_ACHIEVEMENTS_QUEUE_ROOT, "x", 1));
+
+      TEST_EQ_INT(0, unifrog_achievements_begin("quicknes",
+         TEST_ROOT "/rom2.nes"));
+      nes_ram[0] = 0;
+      unifrog_achievements_frame();
+      nes_ram[0] = 1;
+      unifrog_achievements_frame();
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(1, summary.unlocked);
+      snprintf(path, sizeof(path), "%s/%s.txt",
+         UNIFROG_ACHIEVEMENTS_EARNED_ROOT, hash2);
+      TEST_CHECK(access(path, F_OK) != 0);
+
+      /* Card recovers: the retry stores the line before the earned id. */
+      TEST_EQ_INT(0, remove(UNIFROG_ACHIEVEMENTS_QUEUE_ROOT));
+      TEST_EQ_INT(0, mkdir(UNIFROG_ACHIEVEMENTS_QUEUE_ROOT, 0777));
+      fake_clock_ms += 2100;
+      unifrog_achievements_frame();
+      TEST_EQ_INT(0, read_file(UNIFROG_ACHIEVEMENTS_UNLOCK_PATH, queue,
+         sizeof(queue)));
+      TEST_CHECK(strstr(queue, "\"a\":222") != NULL);
+      TEST_EQ_INT(0, read_file(path, queue, sizeof(queue)));
+      TEST_CHECK(strstr(queue, "222") != NULL);
+      unifrog_achievements_end();
+   }
 
    /* An unmapped core must not guess a hash or use a stale game. */
    TEST_EQ_INT(0, unifrog_achievements_begin("unknown-core", rom_path));

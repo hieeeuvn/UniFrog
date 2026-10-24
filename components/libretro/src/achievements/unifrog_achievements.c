@@ -42,6 +42,16 @@
 #define ACHIEVEMENTS_PROGRESS_SAVE_MS 5000u
 #define ACHIEVEMENTS_EARNED_MAX 512u
 #define ACHIEVEMENTS_QUEUE_LINE_MAX 256u
+#define ACHIEVEMENTS_PENDING_MAX 16u
+#define ACHIEVEMENTS_PENDING_LINE_MAX 112u
+#define ACHIEVEMENTS_QUEUE_RETRY_MS 2000u
+
+struct achievements_pending_unlock {
+   unsigned id;
+   unsigned points;
+   int reported;
+   char line[ACHIEVEMENTS_PENDING_LINE_MAX];
+};
 
 struct achievements_state {
    int initialized;
@@ -74,6 +84,14 @@ struct achievements_state {
    uint32_t progress_saved_ms;
    unsigned earned[ACHIEVEMENTS_EARNED_MAX];
    unsigned earned_count;
+
+   /*
+    * Unlocks that are not on the card yet. The handheld can drop a write
+    * while a core runs, so the queue line is kept here until it is stored.
+    */
+   struct achievements_pending_unlock pending[ACHIEVEMENTS_PENDING_MAX];
+   unsigned pending_count;
+   uint32_t queue_retry_ms;
 
    char toast[ACHIEVEMENTS_TOAST_MAX];
    uint32_t toast_until_ms;
@@ -536,24 +554,102 @@ static void achievements_save_progress(void)
    free(buffer);
 }
 
-static void achievements_append_unlock(unsigned id, unsigned points)
+static int achievements_append_line(const char *path, const char *line)
 {
+   size_t length;
    FILE *file;
-   time_t now = time(NULL);
 
-   file = fopen(UNIFROG_ACHIEVEMENTS_UNLOCK_PATH, "ab");
-   if (!file) {
-      UF_LOG_WARN("achievements", "event=unlock_queue_failed id=%u", id);
-      return;
+   if (!path || !line || !line[0])
+      return -1;
+   length = strlen(line);
+   file = fopen(path, "ab");
+   if (!file)
+      return -1;
+   if (fwrite(line, 1, length, file) != length || fflush(file) != 0) {
+      fclose(file);
+      return -1;
    }
-   fprintf(file, "{\"a\":%u,\"p\":%u,\"h\":\"%s\",\"m\":%d,\"t\":%ld}\n",
+   return fclose(file) == 0 ? 0 : -1;
+}
+
+static int achievements_pending_find(unsigned id)
+{
+   unsigned i;
+
+   for (i = 0; i < achievements.pending_count; i++) {
+      if (achievements.pending[i].id == id)
+         return (int)i;
+   }
+   return -1;
+}
+
+static void achievements_flush_pending(void);
+
+/*
+ * Queue an award in memory. The line captures the game hash and unlock time
+ * now so it stays valid if the retry happens after the next game starts.
+ */
+static void achievements_queue_unlock(unsigned id, unsigned points)
+{
+   struct achievements_pending_unlock *entry;
+   time_t now;
+
+   if (id == 0 || achievements_is_earned(id) ||
+       achievements_pending_find(id) >= 0)
+      return;
+   if (achievements.pending_count >= ACHIEVEMENTS_PENDING_MAX) {
+      /* The card may have recovered since the oldest line was queued. */
+      achievements_flush_pending();
+      if (achievements.pending_count >= ACHIEVEMENTS_PENDING_MAX) {
+         UF_LOG_WARN("achievements", "event=unlock_queue_full id=%u", id);
+         return;
+      }
+   }
+   now = time(NULL);
+   entry = &achievements.pending[achievements.pending_count++];
+   entry->id = id;
+   entry->points = points;
+   entry->reported = 0;
+   snprintf(entry->line, sizeof(entry->line),
+      "{\"a\":%u,\"p\":%u,\"h\":\"%s\",\"m\":%d,\"t\":%ld}\n",
       id, points, achievements.hash, achievements.hardcore ? 1 : 0,
       (long)now);
-   fclose(file);
-   achievements.unlock_count++;
-   UF_LOG_INFO("achievements",
-      "event=unlock id=%u points=%u hash=%s hardcore=%d",
-      id, points, achievements.hash, achievements.hardcore);
+}
+
+/*
+ * Store queued awards. An id is only recorded as earned after its queue line
+ * is on the card: writing the earned list first would make a failed append
+ * permanent, because later sessions would skip the trigger as a duplicate.
+ */
+static void achievements_flush_pending(void)
+{
+   unsigned i = 0;
+
+   achievements.queue_retry_ms = unifrog_perf_time_ms();
+   while (i < achievements.pending_count) {
+      struct achievements_pending_unlock *entry = &achievements.pending[i];
+
+      if (achievements_append_line(UNIFROG_ACHIEVEMENTS_UNLOCK_PATH,
+          entry->line) != 0) {
+         /* One diagnosis per award: retries every two seconds are silent. */
+         if (!entry->reported) {
+            entry->reported = 1;
+            UF_LOG_WARN("achievements", "event=unlock_queue_failed id=%u",
+               entry->id);
+         }
+         i++;
+         continue;
+      }
+      achievements_mark_earned(entry->id);
+      achievements.unlock_count++;
+      UF_LOG_INFO("achievements", "event=unlock id=%u points=%u",
+         entry->id, entry->points);
+      achievements.pending_count--;
+      if (i != achievements.pending_count) {
+         achievements.pending[i] =
+            achievements.pending[achievements.pending_count];
+      }
+   }
 }
 
 static void achievements_show_toast(const char *title, unsigned points)
@@ -592,13 +688,12 @@ static void achievements_event(const rc_runtime_event_t *event)
          break;
       definition = achievements_definition(event->id);
       achievements.progress_dirty = 1;
-      achievements_mark_earned(event->id);
-      if (definition) {
-         achievements_append_unlock(definition->id, definition->points);
+      achievements_queue_unlock(event->id,
+         definition ? definition->points : 0);
+      /* The award is real even if the card is busy; show it immediately. */
+      if (definition)
          achievements_show_toast(definition->title, definition->points);
-      } else {
-         achievements_append_unlock(event->id, 0);
-      }
+      achievements_flush_pending();
       break;
    case RC_RUNTIME_EVENT_ACHIEVEMENT_PROGRESS_UPDATED:
       achievements.progress_dirty = 1;
@@ -749,6 +844,7 @@ void unifrog_achievements_end(void)
 {
    if (!achievements.initialized)
       return;
+   achievements_flush_pending();
    achievements_save_progress();
    achievements_clear_game();
    achievements.state = UNIFROG_ACHIEVEMENTS_OFF;
@@ -758,6 +854,15 @@ void unifrog_achievements_frame(void)
 {
    uint32_t now_ms;
 
+   /*
+    * Retry queued awards at a low rate. This keeps a transient SD write
+    * failure from losing an unlock without touching the card every frame.
+    */
+   now_ms = unifrog_perf_time_ms();
+   if (achievements.pending_count &&
+       (uint32_t)(now_ms - achievements.queue_retry_ms) >=
+       ACHIEVEMENTS_QUEUE_RETRY_MS)
+      achievements_flush_pending();
    if (!achievements.active || !achievements.runtime_ready)
       return;
    rc_runtime_do_frame(&achievements.runtime, achievements_event,

@@ -7,9 +7,9 @@ instead:
 1. The firmware computes the RetroAchievements game hash, reads cached
    achievement definitions from the SD card, and evaluates them every frame
    with [rcheevos](https://github.com/RetroAchievements/rcheevos).
-2. Unlocks are appended to a durable queue on the card, and the id is recorded
-   in `achievements/earned/<hash>.txt` so re-entering a game never queues the
-   same award twice.
+2. Unlocks are appended to a durable queue on the card, and only then is the
+   id recorded in `achievements/earned/<hash>.txt` so re-entering a game never
+   queues the same award twice.
 3. `tools/ra_sync.mjs`, run on a PC or phone with the card mounted, downloads
    definitions and uploads the queued unlocks to retroachievements.org.
 
@@ -100,6 +100,11 @@ for the wrong console is valid MD5 but never matches the server.
   response. Do not edit it by hand; delete it and run `--refresh <hash>`.
 - **Achievements never trigger**: check the pause menu list. If it is empty,
   the game may have no achievements, or the core may be unmapped.
+- **Achievements unlock but `queue/unlocks.jsonl` is missing**: check
+  `earned/<hash>.txt`. Older firmware recorded the earned id before appending
+  the queue line, so one rejected SD write lost the award for good. The log
+  line `event=unlock_queue_failed` confirms it; current firmware keeps the
+  line in RAM and retries instead.
 - **Unlocks stay in the queue**: run `--push-only` and read the error. Expired
   sessions, a wrong API key, or Cloudflare blocks are reported and the entry is
   kept for the next run.
@@ -123,6 +128,10 @@ for the wrong console is valid MD5 but never matches the server.
   separately in `earned/<hash>.txt` (one id per line). The engine imports ids
   from `queue/unlocks.jsonl` when that file predates the earned list, so
   upgrading firmware does not re-queue old awards.
+- The queue line is written *before* the id reaches the earned list. SD writes
+  are the least reliable operation while a core runs, so a failed append keeps
+  the line in RAM; it is retried every two seconds and on exit. Writing the
+  earned id first would turn one card fault into a permanently lost award.
 
 NocturnalRTOS ships a port of this engine inside Phobos
 (`components/applications/apps-phobos/source/phobos/achievements/`). It uses
