@@ -15,6 +15,7 @@ the question.
 
 - `developer-onboarding.md`: first build, edit loop, and handoff checks.
 - `dependency-workflow.md`: dependency pins, patch queues, and selected cores.
+- `retroachievements.md`: offline RetroAchievements support and SD sync.
 - `../cores/README.md`: libretro core build and patch workflow.
 - `../js2300/README.md`: embedded JavaScript runtime layer.
 - `js2300-scripting.md`: optional JS2300 script contract.

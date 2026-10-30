@@ -3,10 +3,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <unifrog/achievements.h>
 #include <unifrog/gfx.h>
 #include <unifrog/input.h>
 #include <unifrog/libretro_session.h>
 #include <unifrog/perf.h>
+
+#define QUICK_MENU_ACHIEVEMENT_ROW_MAX 96u
+#define QUICK_MENU_ACHIEVEMENT_POINTS_MAX 1000u
 
 struct libretro_core_api;
 
@@ -108,13 +112,15 @@ int quick_menu_run(const struct libretro_core_api *core,
       QUICK_MENU_PAGE_MAIN = 0,
       QUICK_MENU_PAGE_CORE = 1,
       QUICK_MENU_PAGE_UNIFROG = 2,
-      QUICK_MENU_PAGE_CONFIRM = 3,
+      QUICK_MENU_PAGE_ACHIEVEMENTS = 3,
+      QUICK_MENU_PAGE_CONFIRM = 4,
    };
    enum quick_menu_main_row {
       QUICK_MENU_MAIN_RESUME,
       QUICK_MENU_MAIN_SAVE,
       QUICK_MENU_MAIN_LOAD,
       QUICK_MENU_MAIN_CORE,
+      QUICK_MENU_MAIN_ACHIEVEMENTS,
       QUICK_MENU_MAIN_UNIFROG,
       QUICK_MENU_MAIN_RETURN,
       QUICK_MENU_MAIN_COUNT,
@@ -149,6 +155,11 @@ int quick_menu_run(const struct libretro_core_api *core,
       QUICK_MENU_CONFIRM_CANCEL,
       QUICK_MENU_CONFIRM_COUNT,
    };
+   enum quick_menu_achievement_row {
+      QUICK_MENU_ACHIEVEMENT_BACK,
+      QUICK_MENU_ACHIEVEMENT_ENABLED,
+      QUICK_MENU_ACHIEVEMENT_FIRST,
+   };
    enum quick_menu_confirm_action {
       QUICK_MENU_CONFIRM_NONE,
       QUICK_MENU_CONFIRM_SAVE,
@@ -156,7 +167,7 @@ int quick_menu_run(const struct libretro_core_api *core,
    };
    static const char *main_labels[] = {
       "Resume", "Save state", "Load state", "Core Options",
-      "UniFrog Settings", "Return to UniFrog",
+      "Achievements", "UniFrog Settings", "Return to UniFrog",
    };
    static const char *core_labels[] = {
       "Back", "Save options for core", "Save options for game",
@@ -190,12 +201,19 @@ int quick_menu_run(const struct libretro_core_api *core,
       entry_combo |
       UNIFROG_BUTTON_MASK(UNIFROG_BUTTON_A) |
       UNIFROG_BUTTON_MASK(UNIFROG_BUTTON_B);
-   static const char *labels[QUICK_MENU_CORE_FIXED_COUNT +
-      UNIFROG_LIBRETRO_SESSION_OPTION_MAX];
+   enum {
+      QUICK_MENU_ROW_MAX =
+         QUICK_MENU_CORE_FIXED_COUNT +
+         UNIFROG_LIBRETRO_SESSION_OPTION_MAX +
+         QUICK_MENU_ACHIEVEMENT_FIRST +
+         QUICK_MENU_ACHIEVEMENT_ROW_MAX
+   };
+   static const char *labels[QUICK_MENU_ROW_MAX];
    static char label_storage[UNIFROG_LIBRETRO_SESSION_OPTION_MAX]
       [UNIFROG_LIBRETRO_SESSION_OPTION_LABEL_MAX];
-   static char detail[QUICK_MENU_CORE_FIXED_COUNT +
-      UNIFROG_LIBRETRO_SESSION_OPTION_MAX][28];
+   static char achievement_storage[QUICK_MENU_ACHIEVEMENT_ROW_MAX]
+      [UNIFROG_ACHIEVEMENTS_TITLE_MAX];
+   static char detail[QUICK_MENU_ROW_MAX][28];
    struct unifrog_libretro_session_snapshot snapshot;
    int return_to_frontend = 0;
 
@@ -235,6 +253,14 @@ int quick_menu_run(const struct libretro_core_api *core,
          snprintf(detail[QUICK_MENU_MAIN_CORE],
             sizeof(detail[QUICK_MENU_MAIN_CORE]), "%u options",
             quick_menu_visible_core_option_count());
+         {
+            struct unifrog_achievements_summary summary;
+
+            unifrog_achievements_summary(&summary);
+            snprintf(detail[QUICK_MENU_MAIN_ACHIEVEMENTS],
+               sizeof(detail[QUICK_MENU_MAIN_ACHIEVEMENTS]), "%u/%u",
+               summary.unlocked, summary.total);
+         }
       } else {
          if (page == QUICK_MENU_PAGE_CORE) {
             unsigned visible_core_options = quick_menu_visible_core_option_count();
@@ -284,6 +310,41 @@ int quick_menu_run(const struct libretro_core_api *core,
             snprintf(detail[QUICK_MENU_UNIFROG_RTC_OFFSET],
                sizeof(detail[QUICK_MENU_UNIFROG_RTC_OFFSET]), "< %+d days >",
                snapshot.rtc_offset_minutes / (24 * 60));
+         } else if (page == QUICK_MENU_PAGE_ACHIEVEMENTS) {
+            struct unifrog_achievements_summary summary;
+            unsigned available;
+
+            unifrog_achievements_summary(&summary);
+            labels[QUICK_MENU_ACHIEVEMENT_BACK] = "Back";
+            labels[QUICK_MENU_ACHIEVEMENT_ENABLED] = "RetroAchievements";
+            snprintf(detail[QUICK_MENU_ACHIEVEMENT_ENABLED],
+               sizeof(detail[QUICK_MENU_ACHIEVEMENT_ENABLED]), "< %s >",
+               summary.state == UNIFROG_ACHIEVEMENTS_OFF ? "off" : "on");
+            row_count = QUICK_MENU_ACHIEVEMENT_FIRST;
+            available = unifrog_achievements_count();
+            if (available > QUICK_MENU_ACHIEVEMENT_ROW_MAX)
+               available = QUICK_MENU_ACHIEVEMENT_ROW_MAX;
+            for (unsigned i = 0; i < available; i++) {
+               struct unifrog_achievements_entry entry;
+               unsigned row = QUICK_MENU_ACHIEVEMENT_FIRST + i;
+
+               if (unifrog_achievements_entry(i, &entry) != 0)
+                  break;
+               snprintf(achievement_storage[i],
+                  sizeof(achievement_storage[i]), "%.30s",
+                  entry.title[0] ? entry.title : "Achievement");
+               labels[row] = achievement_storage[i];
+               if (entry.unlocked)
+                  snprintf(detail[row], sizeof(detail[row]), "Earned %uG",
+                     entry.points);
+               else if (entry.progress_percent >= 0)
+                  snprintf(detail[row], sizeof(detail[row]), "%d%% %uG",
+                     entry.progress_percent, entry.points);
+               else
+                  snprintf(detail[row], sizeof(detail[row]), "%uG",
+                     entry.points);
+               row_count++;
+            }
          } else {
             for (unsigned i = 0; i < QUICK_MENU_CONFIRM_COUNT; i++)
                labels[i] = confirm_labels[i];
@@ -311,18 +372,33 @@ int quick_menu_run(const struct libretro_core_api *core,
          UNIFROG_RGB565(120, 214, 189));
       unifrog_gfx_draw_text(&surface, 12, 10, "Pause Menu",
          UNIFROG_RGB565(230, 238, 240), 1);
-      unifrog_gfx_draw_text(&surface, (int)surface.width - 58, 10,
-         page == QUICK_MENU_PAGE_MAIN ? "paused" :
-            page == QUICK_MENU_PAGE_CORE ? "core" :
-            page == QUICK_MENU_PAGE_UNIFROG ? "settings" : "sure?",
-         UNIFROG_RGB565(139, 154, 160), 1);
-      quick_menu_draw_tab(&surface, 10, 38, 70, "Pause",
+      {
+         char page_label[20];
+
+         if (page == QUICK_MENU_PAGE_ACHIEVEMENTS) {
+            struct unifrog_achievements_summary summary;
+
+            unifrog_achievements_summary(&summary);
+            snprintf(page_label, sizeof(page_label), "%u/%u",
+               summary.unlocked, summary.total);
+         } else {
+            snprintf(page_label, sizeof(page_label), "%s",
+               page == QUICK_MENU_PAGE_MAIN ? "paused" :
+               page == QUICK_MENU_PAGE_CORE ? "core" :
+               page == QUICK_MENU_PAGE_UNIFROG ? "settings" : "sure?");
+         }
+         unifrog_gfx_draw_text(&surface, (int)surface.width - 58, 10,
+            page_label, UNIFROG_RGB565(139, 154, 160), 1);
+      }
+      quick_menu_draw_tab(&surface, 6, 38, 58, "Pause",
          page == QUICK_MENU_PAGE_MAIN);
-      quick_menu_draw_tab(&surface, 84, 38, 70, "Core",
+      quick_menu_draw_tab(&surface, 66, 38, 58, "Core",
          page == QUICK_MENU_PAGE_CORE);
-      quick_menu_draw_tab(&surface, 158, 38, 78, "UniFrog",
+      quick_menu_draw_tab(&surface, 126, 38, 58, "UniFrog",
          page == QUICK_MENU_PAGE_UNIFROG);
-      quick_menu_draw_tab(&surface, 240, 38, 70, "State",
+      quick_menu_draw_tab(&surface, 186, 38, 58, "Ach",
+         page == QUICK_MENU_PAGE_ACHIEVEMENTS);
+      quick_menu_draw_tab(&surface, 246, 38, 58, "State",
          page == QUICK_MENU_PAGE_CONFIRM);
       if (page == QUICK_MENU_PAGE_CONFIRM)
          unifrog_gfx_draw_text(&surface, 14, 64,
@@ -335,7 +411,14 @@ int quick_menu_run(const struct libretro_core_api *core,
             (page == QUICK_MENU_PAGE_CONFIRM ? 90 : 66) + (int)i * 18,
             labels[row], detail[row], row == selected);
       }
-      if (snapshot.status[0])
+      if (page == QUICK_MENU_PAGE_ACHIEVEMENTS) {
+         struct unifrog_achievements_summary summary;
+
+         unifrog_achievements_summary(&summary);
+         if (summary.status[0])
+            unifrog_gfx_draw_text(&surface, 12, (int)surface.height - 34,
+               summary.status, UNIFROG_RGB565(205, 240, 235), 1);
+      } else if (snapshot.status[0])
          unifrog_gfx_draw_text(&surface, 12, (int)surface.height - 34,
             snapshot.status, UNIFROG_RGB565(205, 240, 235), 1);
       unifrog_gfx_fill_rect(&surface, 0, (int)surface.height - 22,
@@ -403,6 +486,11 @@ int quick_menu_run(const struct libretro_core_api *core,
                save_slot = save_slot == 0 ?
                   UNIFROG_LIBRETRO_SESSION_STATE_SLOTS - 1u :
                   save_slot - 1u;
+         } else if (page == QUICK_MENU_PAGE_ACHIEVEMENTS &&
+               selected == QUICK_MENU_ACHIEVEMENT_ENABLED) {
+            (void)unifrog_achievements_set_enabled(
+               !unifrog_achievements_enabled());
+            unifrog_achievements_refresh();
          } else if (page == QUICK_MENU_PAGE_MAIN) {
             if (selected == QUICK_MENU_MAIN_SAVE)
                save_slot = save_slot == 0 ?
@@ -461,6 +549,11 @@ int quick_menu_run(const struct libretro_core_api *core,
             (*slot)++;
             if (*slot >= UNIFROG_LIBRETRO_SESSION_STATE_SLOTS)
                *slot = 0;
+         } else if (page == QUICK_MENU_PAGE_ACHIEVEMENTS &&
+               selected == QUICK_MENU_ACHIEVEMENT_ENABLED) {
+            (void)unifrog_achievements_set_enabled(
+               !unifrog_achievements_enabled());
+            unifrog_achievements_refresh();
          } else if (page == QUICK_MENU_PAGE_MAIN) {
             if (selected == QUICK_MENU_MAIN_SAVE) {
                save_slot++;
@@ -560,6 +653,11 @@ int quick_menu_run(const struct libretro_core_api *core,
                previous_selected = selected;
                page = QUICK_MENU_PAGE_CORE;
                selected = QUICK_MENU_CORE_SAVE_CORE;
+            } else if (selected == QUICK_MENU_MAIN_ACHIEVEMENTS) {
+               previous_page = page;
+               previous_selected = selected;
+               page = QUICK_MENU_PAGE_ACHIEVEMENTS;
+               selected = QUICK_MENU_ACHIEVEMENT_ENABLED;
             } else if (selected == QUICK_MENU_MAIN_UNIFROG) {
                previous_page = page;
                previous_selected = selected;
@@ -568,6 +666,15 @@ int quick_menu_run(const struct libretro_core_api *core,
             } else if (selected == QUICK_MENU_MAIN_RETURN) {
                return_to_frontend = 1;
                break;
+            }
+         } else if (page == QUICK_MENU_PAGE_ACHIEVEMENTS) {
+            if (selected == QUICK_MENU_ACHIEVEMENT_BACK) {
+               page = QUICK_MENU_PAGE_MAIN;
+               selected = QUICK_MENU_MAIN_ACHIEVEMENTS;
+            } else if (selected == QUICK_MENU_ACHIEVEMENT_ENABLED) {
+               (void)unifrog_achievements_set_enabled(
+                  !unifrog_achievements_enabled());
+               unifrog_achievements_refresh();
             }
          } else if (page == QUICK_MENU_PAGE_CORE) {
             if (selected == QUICK_MENU_CORE_BACK) {
