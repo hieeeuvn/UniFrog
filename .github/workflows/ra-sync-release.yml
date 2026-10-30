@@ -27,11 +27,13 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    container:
-      image: alpine:latest
     steps:
+      # Zig (glibc) and the Temurin JDK (glibc) cannot run inside an Alpine
+      # (musl) container, so this job builds directly on the Ubuntu runner.
       - name: Install packages
-        run: apk add git make dtc tcc tcc-libs-static gcc perl musl-dev zlib-dev ccache curl tar xz zip patch python3
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zip unzip xz-utils
 
       - name: Check out UniFrog
         uses: actions/checkout@v4
@@ -102,8 +104,9 @@ jobs:
         run: |
           set -eu
           zig_dir=.deps/zig-linux-x86_64-0.13.0
-          zig_url=https://github.com/ziglang/zig/releases/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
-          zig_sha256=4cad438e662770ef63c0eb2143c7e983ac8bbfff1bd9313441121db5e5bb4171e6
+          # Binary releases live on ziglang.org, not on the GitHub repo.
+          zig_url=https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          zig_sha256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea
           mkdir -p "$zig_dir"
           curl -sL -o /tmp/zig.tar.xz "$zig_url"
           echo "$zig_sha256  /tmp/zig.tar.xz" | sha256sum -c -
