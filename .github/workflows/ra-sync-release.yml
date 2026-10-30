@@ -86,6 +86,7 @@ jobs:
           printf 'is_tag=%s\n' "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Cache toolchain
+        id: cache
         uses: actions/cache@v4
         with:
           path: |
