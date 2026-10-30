@@ -85,6 +85,10 @@ jobs:
           printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
           printf 'notes=%s\n' "$notes" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          # Artifact names must not contain a forward slash (NTFS-safe), but
+          # branch names like freebuff/<id> do contain one.
+          slug=$(printf '%s' "$tag" | sed 's|[^A-Za-z0-9._-]|-|g')
+          printf 'slug=%s\n' "$slug" >> "$GITHUB_OUTPUT"
           printf 'is_tag=%s\n' "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Cache toolchain
@@ -181,7 +185,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ra-sync-${{ steps.meta.outputs.tag }}
+          name: ra-sync-${{ steps.meta.outputs.slug }}
           path: release-artifacts
 
       - name: Create prerelease
@@ -193,7 +197,7 @@ jobs:
           draft: false
           prerelease: true
           files: release-artifacts/*
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
 
       - name: Publish workflow dispatch prerelease
         uses: softprops/action-gh-release@v2
