@@ -590,6 +590,25 @@ static size_t achievements_core_memory_size(unsigned id)
       achievements_core_api->get_memory_size, id);
 }
 
+/*
+ * The core's own descriptor layout, captured from SET_MEMORY_MAPS. rcheevos
+ * rebuilds a console's address space from RETRO_MEMORY_SYSTEM_RAM when the map
+ * is absent, which is wrong for every console with disjoint RAM banks: gpsp
+ * then answers GBA IWRAM (0x03000000) reads with EWRAM bytes and EWRAM
+ * (0x02000000) reads 32KB too far, so triggers evaluate against the wrong
+ * memory and can fire for achievements nobody earned.
+ */
+static const struct retro_memory_map *achievements_core_memory_map(void)
+{
+   static struct retro_memory_map map;
+
+   if (host.memory_descriptor_count == 0)
+      return NULL;
+   map.descriptors = host.memory_descriptors;
+   map.num_descriptors = host.memory_descriptor_count;
+   return &map;
+}
+
 static void host_draw_achievement_toast(void)
 {
    struct unifrog_surface surface;
@@ -926,6 +945,8 @@ out_content_prepare:
    loading_draw("LOADING GAME", "CORE LOAD", 72);
    printf("unifrog libretro step=retro_load_game\n");
    (void)unifrog_log_flush();
+   /* A map from the previous game must not outlive its core pointers. */
+   host.memory_descriptor_count = 0;
    libretro_watchdog_enter(LIBRETRO_WATCHDOG_PHASE_LOAD, 0);
    retro_load_start_us = host_time_us();
    libretro_activity_set_core_call(core,
@@ -955,6 +976,7 @@ out_content_prepare:
    achievements_core_api = core;
    unifrog_achievements_set_memory_access(achievements_core_memory_data,
       achievements_core_memory_size);
+   unifrog_achievements_set_memory_map(achievements_core_memory_map());
    (void)unifrog_achievements_begin(core->id, path);
 
    /*

@@ -50,6 +50,23 @@ at most the progress written in the last five seconds.
 
 Node 18 or newer is the only requirement; the script has no npm dependencies.
 
+## Session digest (optional)
+
+`tools/ra_digest.mjs` reads the same card files (cached definitions, earned
+ids, queued unlocks) and asks a model for a short plain-text digest of the
+session. The model call goes through the [Respan](https://www.respan.ai)
+hosted gateway, so no provider key is needed: copy `.env.example` to `.env`,
+set `RESPAN_API_KEY`, and run
+
+```sh
+node --env-file=.env tools/ra_digest.mjs --root /media/mmcblk0/unifrog_data
+node tools/ra_digest.mjs --root . --dry-run   # request only, no key needed
+```
+
+Requests appear as traces in the Respan platform. The tool is read-only: it
+never touches the queue or the earned lists, and `ra_sync.mjs` still works
+without the key.
+
 If you would rather not use a terminal, `tools/ra-sync-gui` builds the same
 sync as a GUI: `UniFrog-RA-Sync.exe` for Windows (32- and 64-bit) and
 `UniFrog-RA-Sync.apk` for Android 5.0+, which picks `unifrog_data` through the
@@ -131,6 +148,18 @@ for the wrong console is valid MD5 but never matches the server.
 - The companion protocol is the documented emulator API: `r=patch&m=<hash>`
   for definitions and `r=awardachievement` with the md5 signature
   `id + user + hardcore [+ id + seconds]`.
+- The core's `SET_MEMORY_MAPS` layout is forwarded to rcheevos
+  (`unifrog_achievements_set_memory_map`). Without it rcheevos rebuilds a
+  console's address space from `RETRO_MEMORY_SYSTEM_RAM` alone, which is wrong
+  wherever RAM is not one contiguous block: gpsp exposes GBA IWRAM at
+  `0x03000000` and EWRAM at `0x02000000` only through the map, so the fallback
+  answered IWRAM reads with EWRAM bytes and read EWRAM 32KB too far. Every
+  trigger then evaluated against the wrong bytes, and achievements whose
+  conditions happen to be true at that state unlocked at once.
+- If the base of the console's address space cannot be mapped at all, the
+  engine logs `event=memory_unmapped` and stops tracking instead of evaluating
+  triggers against zeros; `event=memory_regions` reports how many descriptors
+  the core offered and how many bytes ended up as null filler.
 - rcheevos only serializes *unfinished* triggers, so earned ids are stored
   separately in `earned/<hash>.txt` (one id per line). The engine imports ids
   from `queue/unlocks.jsonl` when that file predates the earned list, so

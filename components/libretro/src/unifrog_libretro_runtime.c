@@ -2228,8 +2228,21 @@ bool unifrog_libretro_environment_cb(unsigned cmd, void *data)
       if (data) {
          const struct retro_memory_map *map =
             (const struct retro_memory_map *)data;
-         printf("unifrog libretro env=set_memory_maps count=%u\n",
-            (unsigned)map->num_descriptors);
+         unsigned count = map->num_descriptors;
+
+         if (count > LIBRETRO_CORE_MEMORY_DESCRIPTORS_MAX)
+            count = LIBRETRO_CORE_MEMORY_DESCRIPTORS_MAX;
+         if (map->descriptors && count) {
+            memcpy(host.memory_descriptors, map->descriptors,
+               count * sizeof(host.memory_descriptors[0]));
+            host.memory_descriptor_count = count;
+         } else {
+            host.memory_descriptor_count = 0;
+         }
+         printf("unifrog libretro env=set_memory_maps count=%u kept=%u\n",
+            (unsigned)map->num_descriptors, host.memory_descriptor_count);
+      } else {
+         host.memory_descriptor_count = 0;
       }
       return true;
    case RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE:

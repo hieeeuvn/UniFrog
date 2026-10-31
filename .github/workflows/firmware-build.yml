@@ -1,0 +1,142 @@
+name: Firmware build
+
+on:
+  push:
+    tags:
+      - 'fw-v*'
+  workflow_dispatch:
+    inputs:
+      release_title:
+        description: Prerelease title (defaults to the ref name)
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Install packages
+        run: apk add git make dtc tcc tcc-libs-static gcc perl musl-dev zlib-dev ccache curl tar xz zip patch
+
+      - name: Check out UniFrog
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure Git
+        run: |
+          set -eu
+          export GIT_CONFIG_GLOBAL="$RUNNER_TEMP/unifrog-gitconfig"
+          git config --global --add safe.directory "$PWD"
+          git config --global user.name "UniFrog CI"
+          git config --global user.email "ci@unifrog.local"
+          git config --global \
+            url."https://github.com/axgdev/frog2k-qpsx.git".insteadOf \
+            "git@github.com:axgdev/frog2k-qpsx.git"
+          git config --global \
+            url."https://github.com/axgdev/frog2k-javascript.git".insteadOf \
+            "git@github.com:axgdev/frog2k-javascript.git"
+          echo "GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL" >> "$GITHUB_ENV"
+          echo "GIT_TERMINAL_PROMPT=0" >> "$GITHUB_ENV"
+
+      - name: Verify build ref
+        run: |
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "ref_name=${GITHUB_REF_NAME}"
+          echo "sha=${GITHUB_SHA}"
+          echo "checked_out=$(git rev-parse HEAD)"
+          git describe --tags --always --dirty
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: unifrog-fw-ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            unifrog-fw-ccache-${{ runner.os }}-
+            unifrog-ccache-${{ runner.os }}-
+
+      - name: Cache core sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps/cores
+            .deps/support
+          key: unifrog-cores-${{ runner.os }}-${{ hashFiles('cores/manifest.mk', 'cores/patches/**/*.patch') }}
+          restore-keys: |
+            unifrog-cores-${{ runner.os }}-
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: unifrog-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            unifrog-toolchain-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build firmware
+        run: |
+          set -eu
+          export CCACHE_DIR="$PWD/.ccache"
+          jobs="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+          slug=$(printf '%s' "$GITHUB_REF_NAME" | sed 's|[^A-Za-z0-9._-]|-|g')
+          archive="UniFrog-firmware-${slug}.zip"
+          make ci-sd-zip \
+            JOBS="$jobs" \
+            HOSTCC=gcc \
+            CCACHE=ccache \
+            TOOLCHAIN="$PWD/toolchain" \
+            CI_SDZIP="$PWD/$archive"
+          test -f output/unifrog.bin
+          printf 'archive=%s\n' "$archive" >> "$GITHUB_ENV"
+          printf 'slug=%s\n' "$slug" >> "$GITHUB_ENV"
+
+      - name: Package firmware artifacts
+        run: |
+          set -eu
+          mkdir -p release-artifacts
+          cp output/unifrog.bin release-artifacts/UniFrog-firmware.bin
+          cp "$archive" release-artifacts/
+          # bisrv.asd is the bootable image; keep it when the build produced it.
+          if [ -f bisrv.asd ]; then
+            cp bisrv.asd release-artifacts/
+          fi
+          if [ -f fastboot.asd ]; then
+            cp fastboot.asd release-artifacts/
+          fi
+          (cd release-artifacts && sha256sum * > SHA256SUMS)
+          ls -l release-artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unifrog-firmware-${{ env.slug }}
+          path: release-artifacts
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('fw-{0}', github.run_id) }}
+          name: ${{ github.event.inputs.release_title || github.ref_name }}
+          body: |
+            UniFrog firmware built from ${{ github.sha }}.
+
+            Flash `UniFrog-firmware.bin` (or `bisrv.asd` when present), or copy
+            `${{ env.archive }}` to the SD card for the full set of cores and
+            data files.
+          draft: false
+          prerelease: true
+          files: release-artifacts/*

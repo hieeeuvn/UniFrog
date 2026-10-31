@@ -65,6 +65,16 @@ void unifrog_achievements_set_memory_access(
    void *(*data)(unsigned id), size_t (*size)(unsigned id));
 
 /*
+ * Register the memory map the core published with SET_MEMORY_MAPS. Consoles
+ * with disjoint RAM banks (GBA: IWRAM 0x03000000, EWRAM 0x02000000) can only be
+ * read correctly through it; pass NULL when the core offers no map. The map is
+ * expected to stay valid for the whole session and must be replaced before
+ * begin() on every load, because it points into core-owned memory.
+ */
+struct retro_memory_map;
+void unifrog_achievements_set_memory_map(const struct retro_memory_map *map);
+
+/*
  * Start tracking the content that is about to run. Called by the libretro
  * session after retro_load_game() so core memory is available. Returns 0 when
  * the subsystem is disabled or the core has no RetroAchievements console.

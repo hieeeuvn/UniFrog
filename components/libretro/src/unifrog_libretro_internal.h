@@ -205,12 +205,23 @@ struct libretro_core_api {
    void (*cheat_set)(unsigned index, bool enabled, const char *code);
 };
 
+#define LIBRETRO_CORE_MEMORY_DESCRIPTORS_MAX 16
+
 struct libretro_host {
    struct unifrog_presenter presenter;
    struct unifrog_audio audio;
    struct unifrog_libretro_run_options options;
    struct unifrog_scpu_clock scpu_restore;
    struct retro_audio_buffer_status_callback audio_status;
+   /*
+    * Last memory map the core published through SET_MEMORY_MAPS.
+    * RetroAchievements has to read through it: gpsp exposes GBA IWRAM
+    * (0x03000000) and EWRAM (0x02000000) only here, and rebuilding those banks
+    * from RETRO_MEMORY_SYSTEM_RAM alone shifts every read by the IWRAM size.
+    */
+   struct retro_memory_descriptor
+      memory_descriptors[LIBRETRO_CORE_MEMORY_DESCRIPTORS_MAX];
+   unsigned memory_descriptor_count;
    const char *core_id;
    uintptr_t core_gp;
    uint32_t buttons;

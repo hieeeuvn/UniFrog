@@ -706,6 +706,14 @@ static void achievements_event(const rc_runtime_event_t *event)
 static void achievements_core_memory_info(uint32_t id,
    rc_libretro_core_memory_info_t *info);
 
+/* The core's SET_MEMORY_MAPS layout, owned by the libretro host. */
+static const struct retro_memory_map *achievements_memory_map;
+
+void unifrog_achievements_set_memory_map(const struct retro_memory_map *map)
+{
+   achievements_memory_map = map;
+}
+
 static uint32_t achievements_peek(uint32_t address, uint32_t num_bytes,
    void *userdata)
 {
@@ -730,12 +738,36 @@ static uint32_t achievements_peek(uint32_t address, uint32_t num_bytes,
 
 static int achievements_init_memory(void)
 {
+   unsigned index;
+   size_t filler = 0;
+
    memset(&achievements.regions, 0, sizeof(achievements.regions));
    if (!achievements_memory_data || !achievements_memory_size)
       return -1;
-   if (!rc_libretro_memory_init(&achievements.regions, NULL,
+   if (!rc_libretro_memory_init(&achievements.regions, achievements_memory_map,
        achievements_core_memory_info, achievements.console_id))
       return -1;
+   for (index = 0; index < achievements.regions.count; index++) {
+      if (!achievements.regions.data[index])
+         filler += achievements.regions.size[index];
+   }
+   UF_LOG_INFO("achievements",
+      "event=memory_regions console=%u mapped=%u regions=%u unmapped=%u",
+      achievements.console_id,
+      achievements_memory_map ? achievements_memory_map->num_descriptors : 0,
+      achievements.regions.count, (unsigned)filler);
+   /*
+    * Nothing readable at the base of this console's address space means every
+    * trigger sees zero, and conditions such as "value = 0" fire on their own.
+    * That is how a whole achievement set unlocks at once, so refuse to track
+    * instead of uploading awards the player never earned.
+    */
+   if (achievements.regions.count == 0 || !achievements.regions.data[0]) {
+      UF_LOG_WARN("achievements", "event=memory_unmapped console=%u",
+         achievements.console_id);
+      achievements.regions_ready = 0;
+      return -1;
+   }
    achievements.regions_ready = 1;
    return 0;
 }
