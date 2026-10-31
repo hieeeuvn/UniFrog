@@ -123,6 +123,14 @@ Outputs land in `dist/`, which is not committed.
   awards go out with the casual flag and no `o=`, and the file itself is never
   modified; the server answers "already unlocked" once the id is on the
   account.
+- An id from the earned list is only uploaded when `cache/<hash>.json` defines
+  it. The award endpoint validates the signature over the id and never checks
+  which game the id belongs to, so one bad id in the list would be awarded as
+  some other game's achievement. With no cache file the whole list is skipped
+  (`earned list skipped` in the log): download the definitions for that game,
+  then sync again. Nothing in the app can undo an award, so a wrong unlock has
+  to be reset on the site: open the game page, manage your progress for that
+  game and reset it.
 - `o=` (seconds since unlock) comes from the card's queue line, so a wildly
   wrong console clock can make the server reject an otherwise valid award.
 - Nothing is deleted from `unifrog_data` except `queue/*.req` files that were

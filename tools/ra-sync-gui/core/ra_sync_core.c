@@ -871,6 +871,44 @@ static int earned_scan_callback(void *userdata, const char *name)
    return 0;
 }
 
+/*
+ * r=awardachievement validates the signature over the id alone; it never checks
+ * that the achievement belongs to the game named by m=. Sending an id the game
+ * does not define therefore awards a stranger's achievement and builds points.
+ * Only ids the cached patch lists may leave this machine.
+ */
+static int definitions_contain(const char *json, unsigned long value)
+{
+   const char *cursor = json;
+
+   if (!json)
+      return 0;
+   while ((cursor = strstr(cursor, "\"ID\"")) != NULL) {
+      const char *scan = cursor + 4;
+      unsigned long parsed = 0;
+      int digits = 0;
+
+      cursor += 4;
+      while (*scan == ' ' || *scan == '\t' || *scan == '\n' ||
+             *scan == '\r')
+         scan++;
+      if (*scan != ':')
+         continue;
+      scan++;
+      while (*scan == ' ' || *scan == '\t' || *scan == '\n' ||
+             *scan == '\r')
+         scan++;
+      while (*scan >= '0' && *scan <= '9' && digits < 10) {
+         parsed = parsed * 10ul + (unsigned long)(*scan - '0');
+         scan++;
+         digits++;
+      }
+      if (digits > 0 && parsed == value)
+         return 1;
+   }
+   return 0;
+}
+
 static void sync_earned(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
    const struct ra_sync_options *options, const char *user, const char *key,
    ra_sync_log_fn log, void *log_ud, struct ra_sync_stats *stats)
@@ -888,15 +926,32 @@ static void sync_earned(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
 
    for (index = 0; index < scan.count; index++) {
       char path[RA_SYNC_NAME_MAX + 16];
+      char cache_path[RA_SYNC_NAME_MAX + 16];
       char *data = NULL;
+      char *definitions = NULL;
       size_t size = 0;
+      size_t definitions_size = 0;
       size_t offset = 0;
       unsigned ids = 0;
+      unsigned skipped = 0;
 
       snprintf(path, sizeof(path), RA_SYNC_EARNED_DIR "/%s.txt",
          scan.hashes[index]);
       if (!fs->read || fs->read(fs->userdata, path, &data, &size) != 0)
          continue;
+      snprintf(cache_path, sizeof(cache_path), RA_SYNC_CACHE_DIR "/%s.json",
+         scan.hashes[index]);
+      if (!fs->read ||
+          fs->read(fs->userdata, cache_path, &definitions,
+             &definitions_size) != 0) {
+         snprintf(line, sizeof(line),
+            "%s: earned list skipped, %s is missing; download the "
+            "definitions for this game first", scan.hashes[index],
+            cache_path);
+         log_line(log, log_ud, line);
+         free(data);
+         continue;
+      }
       while (offset < size) {
          unsigned long value = 0;
          int digits = 0;
@@ -917,6 +972,14 @@ static void sync_earned(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
             offset++;
          if (digits == 0 || value == 0)
             continue;
+         if (!definitions_contain(definitions, value)) {
+            skipped++;
+            snprintf(line, sizeof(line),
+               "achievement %lu: not in the %s definitions, skipped",
+               value, scan.hashes[index]);
+            log_line(log, log_ud, line);
+            continue;
+         }
          if (!push_seen_add(seen, &seen_count, (unsigned)value, 0,
              scan.hashes[index]))
             continue;
@@ -927,10 +990,18 @@ static void sync_earned(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
          (void)push_line(http, options, user, key, line, log, log_ud, stats);
       }
       free(data);
+      free(definitions);
       if (ids > 0) {
          snprintf(line, sizeof(line),
             "%s: %u achievement%s from the earned list (casual, no "
             "timestamp)", scan.hashes[index], ids, ids == 1 ? "" : "s");
+         log_line(log, log_ud, line);
+      }
+      if (skipped > 0) {
+         snprintf(line, sizeof(line),
+            "%s: %u id%s in the earned list belong to no achievement of "
+            "this game and stayed on the card", scan.hashes[index],
+            skipped, skipped == 1 ? "" : "s");
          log_line(log, log_ud, line);
       }
    }

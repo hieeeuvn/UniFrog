@@ -624,6 +624,10 @@ static void test_earned_recovery(void)
 
    reset_root();
    write_text("earned/0123456789abcdef0123456789abcdef.txt", "111\n222\n");
+   write_text("cache/0123456789abcdef0123456789abcdef.json",
+      "{\"Success\":true,\"PatchData\":{\"ID\":9,\"Title\":\"T\","
+      "\"Achievements\":[{\"ID\":111,\"Title\":\"a\"},"
+      "{\"ID\":222,\"Title\":\"b\"}]}}");
 
    memset(&options, 0, sizeof(options));
    memset(log_buffer, 0, sizeof(log_buffer));
@@ -664,6 +668,65 @@ static void test_earned_recovery(void)
       "earned/0123456789abcdef0123456789abcdef.txt"));
 }
 
+/*
+ * awardachievement trusts the id: it validates the signature and awards, without
+ * checking that the game named by m= defines that id. An id from the earned
+ * list that the cached patch does not define therefore has to stay on the card,
+ * or a single bad id becomes somebody else's achievement on the account.
+ */
+static void test_earned_skips_undefined_ids(void)
+{
+   struct ra_sync_options options;
+   struct ra_sync_stats stats;
+   ra_sync_http_t http = { NULL, fake_post };
+
+   reset_root();
+   write_text("earned/0123456789abcdef0123456789abcdef.txt", "111\n999\n");
+   write_text("cache/0123456789abcdef0123456789abcdef.json",
+      "{\"Success\":true,\"PatchData\":{\"ID\":9,\"Title\":\"T\","
+      "\"Achievements\":[{\"ID\":111,\"Title\":\"a\"}]}}");
+
+   memset(&options, 0, sizeof(options));
+   memset(log_buffer, 0, sizeof(log_buffer));
+   options.user = "Tester";
+   options.key = TEST_TOKEN;
+   options.push = 1;
+   last_form_count = 0;
+   CHECK_INT(0, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
+      &stats));
+   CHECK_INT(1, stats.awarded);
+   CHECK_INT(0, stats.failed);
+   CHECK_INT(1, last_form_count);
+   CHECK(form_has(last_forms[0], "&a=111"));
+   CHECK(strstr(log_buffer, "achievement 999: not in the") != NULL);
+   CHECK(strstr(log_buffer, "stayed on the card") != NULL);
+}
+
+/* Without the definitions nothing can be verified, so nothing is sent. */
+static void test_earned_needs_definitions(void)
+{
+   struct ra_sync_options options;
+   struct ra_sync_stats stats;
+   ra_sync_http_t http = { NULL, fake_post };
+
+   reset_root();
+   write_text("earned/0123456789abcdef0123456789abcdef.txt", "111\n");
+
+   memset(&options, 0, sizeof(options));
+   memset(log_buffer, 0, sizeof(log_buffer));
+   options.user = "Tester";
+   options.key = TEST_TOKEN;
+   options.push = 1;
+   last_form_count = 0;
+   CHECK_INT(0, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
+      &stats));
+   CHECK_INT(0, stats.awarded);
+   CHECK_INT(0, stats.failed);
+   CHECK_INT(0, last_form_count);
+   CHECK(strstr(log_buffer, "earned list skipped") != NULL);
+   CHECK(strstr(log_buffer, "download the definitions") != NULL);
+}
+
 int main(void)
 {
    test_signature_and_md5();
@@ -675,6 +738,8 @@ int main(void)
    test_rewrite_without_rename();
    test_list();
    test_earned_recovery();
+   test_earned_skips_undefined_ids();
+   test_earned_needs_definitions();
 
    if (failures == 0) {
       printf("OK ra-sync-core\n");
