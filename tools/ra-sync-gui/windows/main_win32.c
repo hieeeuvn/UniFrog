@@ -29,6 +29,7 @@
 #define IDC_LOG 1009
 #define IDC_STATUS 1010
 #define IDC_HINT 1011
+#define IDC_PASSWORD 1012
 #define TIMER_DRAIN 1
 #define WM_JOB_DONE (WM_APP + 1)
 
@@ -38,6 +39,8 @@
 struct job {
    char user[128];
    char key[256];
+   char password[128];
+   char token[RA_SYNC_TOKEN_MAX];
    char root[MAX_PATH];
    int pull;
    int push;
@@ -199,6 +202,9 @@ static DWORD WINAPI sync_thread(LPVOID parameter)
       memset(&options, 0, sizeof(options));
       options.user = job->user;
       options.key = job->key;
+      options.password = job->password;
+      options.token_out = job->token;
+      options.token_out_size = sizeof(job->token);
       options.pull = job->pull;
       options.push = job->push;
       options.list = job->list;
@@ -233,6 +239,8 @@ static void start_sync(int pull, int push, int list)
    InitializeCriticalSection(&current.lock);
    GetDlgItemTextA(main_window, IDC_USER, current.user, sizeof(current.user));
    GetDlgItemTextA(main_window, IDC_KEY, current.key, sizeof(current.key));
+   GetDlgItemTextA(main_window, IDC_PASSWORD, current.password,
+      sizeof(current.password));
    snprintf(current.root, sizeof(current.root), "%s", root);
    current.pull = pull;
    current.push = push;
@@ -282,6 +290,11 @@ static void finish_sync(void)
       current.stats.cached, current.stats.unknown, current.stats.awarded,
       current.stats.pending);
    SetDlgItemTextA(main_window, IDC_HINT, stats_line);
+   if (current.token[0]) {
+      /* Keep the Connect token so the password field can stay empty. */
+      SetDlgItemTextA(main_window, IDC_KEY, current.token);
+      write_settings();
+   }
    current.running = 0;
    set_running_controls(0);
    DeleteCriticalSection(&current.lock);
@@ -325,9 +338,12 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam,
       make_control("STATIC", "Username", SS_LEFT, 16, 18, 90, 20, 0);
       make_control("EDIT", "", WS_BORDER | ES_AUTOHSCROLL, 110, 15, 220, 24,
          IDC_USER);
-      make_control("STATIC", "Web API key", SS_LEFT, 16, 50, 90, 20, 0);
+      make_control("STATIC", "Connect token", SS_LEFT, 16, 50, 90, 20, 0);
       make_control("EDIT", "", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL, 110,
          47, 220, 24, IDC_KEY);
+      make_control("STATIC", "RA password", SS_LEFT, 344, 50, 90, 20, 0);
+      make_control("EDIT", "", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL, 438,
+         47, 292, 24, IDC_PASSWORD);
       make_control("STATIC", "SD folder", SS_LEFT, 16, 82, 90, 20, 0);
       make_control("EDIT", "", WS_BORDER | ES_AUTOHSCROLL, 110, 79, 520, 24,
          IDC_FOLDER);

@@ -34,6 +34,7 @@ public final class MainActivity extends Activity implements SafCard.Listener {
 
     private EditText userField;
     private EditText keyField;
+    private EditText passwordField;
     private TextView folderLabel;
     private TextView statusView;
     private TextView logView;
@@ -52,6 +53,7 @@ public final class MainActivity extends Activity implements SafCard.Listener {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         userField = (EditText) findViewById(R.id.user);
         keyField = (EditText) findViewById(R.id.key);
+        passwordField = (EditText) findViewById(R.id.password);
         folderLabel = (TextView) findViewById(R.id.folder);
         statusView = (TextView) findViewById(R.id.status);
         logView = (TextView) findViewById(R.id.log);
@@ -152,14 +154,17 @@ public final class MainActivity extends Activity implements SafCard.Listener {
             return;
         String user = userField.getText().toString().trim();
         String key = keyField.getText().toString().trim();
+        String password = passwordField.getText().toString().trim();
         if (treeUri == null) {
             Toast.makeText(this, "Choose the card's unifrog_data folder first",
                 Toast.LENGTH_LONG).show();
             return;
         }
-        if (!listOnly && (user.length() == 0 || key.length() == 0)) {
+        if (!listOnly && (user.length() == 0
+            || (key.length() == 0 && password.length() == 0))) {
             Toast.makeText(this,
-                "Enter your RetroAchievements username and Web API key",
+                "Enter your RetroAchievements username and password "
+                    + "(or a 16-character Connect token)",
                 Toast.LENGTH_LONG).show();
             return;
         }
@@ -174,6 +179,7 @@ public final class MainActivity extends Activity implements SafCard.Listener {
 
         final String userName = user;
         final String apiKey = key;
+        final String accountPassword = password;
         final boolean doPull = pull;
         final boolean doPush = push;
         final boolean list = listOnly;
@@ -186,23 +192,27 @@ public final class MainActivity extends Activity implements SafCard.Listener {
         worker.execute(new Runnable() {
             @Override
             public void run() {
-                runSync(userName, apiKey, doPull, doPush, list, tree);
+                runSync(userName, apiKey, accountPassword, doPull, doPush, list,
+                    tree);
             }
         });
     }
 
-    private void runSync(String user, String key, boolean pull, boolean push,
-        boolean list, Uri tree) {
+    private void runSync(String user, String key, String password, boolean pull,
+        boolean push, boolean list, Uri tree) {
         try {
             SafCard card = SafCard.open(getContentResolver(), tree, this);
-            int result = NativeSync.run(user, key, pull, push, list, false, card);
-            if (result != 0)
+            String token = NativeSync.run(user, key, password, pull, push, list,
+                false, card);
+            if (token == null)
                 statusView.post(new Runnable() {
                     @Override
                     public void run() {
                         statusView.setText("Stopped early - see the log");
                     }
                 });
+            else if (token.length() > 0)
+                cacheToken(token);
         } catch (Throwable error) {
             final String message = error.getClass().getSimpleName()
                 + (error.getMessage() != null ? ": " + error.getMessage() : "");
@@ -216,6 +226,17 @@ public final class MainActivity extends Activity implements SafCard.Listener {
         } finally {
             setRunning(false);
         }
+    }
+
+    /** Keeps the Connect token so the password field can stay empty later. */
+    private void cacheToken(final String token) {
+        prefs.edit().putString("key", token).apply();
+        keyField.post(new Runnable() {
+            @Override
+            public void run() {
+                keyField.setText(token);
+            }
+        });
     }
 
     private void setRunning(final boolean value) {

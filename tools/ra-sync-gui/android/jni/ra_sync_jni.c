@@ -318,8 +318,8 @@ static void core_status(struct bridge *bridge, int result,
 
 JNIEXPORT jint JNICALL
 Java_com_unifrog_rasync_NativeSync_run(JNIEnv *env, jclass type,
-   jstring user, jstring key, jboolean pull, jboolean push, jboolean list,
-   jboolean dry_run, jobject callback)
+   jstring user, jstring key, jstring password, jboolean pull, jboolean push,
+   jboolean list, jboolean dry_run, jobject callback)
 {
    struct bridge bridge;
    struct ra_sync_options options;
@@ -329,17 +329,20 @@ Java_com_unifrog_rasync_NativeSync_run(JNIEnv *env, jclass type,
    jclass klass;
    char *user_text = NULL;
    char *key_text = NULL;
+   char *password_text = NULL;
+   char token[RA_SYNC_TOKEN_MAX];
+   jstring token_value = NULL;
    int result;
 
    (void)type;
    if (!callback)
-      return -1;
+      return NULL;
    memset(&bridge, 0, sizeof(bridge));
    bridge.env = env;
    bridge.object = callback;
    klass = (*env)->GetObjectClass(env, callback);
    if (!klass)
-      return -1;
+      return NULL;
    LOOKUP(exists, "exists", "(Ljava/lang/String;)Z");
    LOOKUP(list, "list", "(Ljava/lang/String;)[Ljava/lang/String;");
    LOOKUP(read, "read", "(Ljava/lang/String;)[B");
@@ -353,16 +356,23 @@ Java_com_unifrog_rasync_NativeSync_run(JNIEnv *env, jclass type,
 
    user_text = copy_to_c(&bridge, user);
    key_text = copy_to_c(&bridge, key);
-   if ((user && !user_text) || (key && !key_text)) {
+   password_text = copy_to_c(&bridge, password);
+   if ((user && !user_text) || (key && !key_text) ||
+       (password && !password_text)) {
       (*env)->DeleteLocalRef(env, klass);
       free(user_text);
       free(key_text);
-      return -1;
+      free(password_text);
+      return NULL;
    }
 
    memset(&options, 0, sizeof(options));
+   memset(token, 0, sizeof(token));
    options.user = user_text ? user_text : "";
    options.key = key_text ? key_text : "";
+   options.password = password_text ? password_text : "";
+   options.token_out = token;
+   options.token_out_size = sizeof(token);
    options.pull = pull ? 1 : 0;
    options.push = push ? 1 : 0;
    options.list = list ? 1 : 0;
@@ -384,15 +394,19 @@ Java_com_unifrog_rasync_NativeSync_run(JNIEnv *env, jclass type,
    memset(&stats, 0, sizeof(stats));
    result = ra_sync_run(&http, &fs, &options, core_log, &bridge, &stats);
    core_status(&bridge, result, &stats);
+   if (result == 0 && token[0])
+      token_value = (*env)->NewStringUTF(env, token);
 
    (*env)->DeleteLocalRef(env, klass);
    free(user_text);
    free(key_text);
-   return result;
+   free(password_text);
+   return token_value;
 
 fail:
    (*env)->DeleteLocalRef(env, klass);
    free(user_text);
    free(key_text);
-   return -1;
+   free(password_text);
+   return NULL;
 }

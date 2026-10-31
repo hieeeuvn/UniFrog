@@ -24,6 +24,9 @@ extern "C" {
 #define RA_SYNC_ERROR_MAX 256
 #define RA_SYNC_HASH_MAX 33
 #define RA_SYNC_NAME_MAX 128
+/* dorequest.php issues 16-character Connect tokens from r=login2. */
+#define RA_SYNC_TOKEN_LEN 16
+#define RA_SYNC_TOKEN_MAX 64
 
 typedef void (*ra_sync_log_fn)(void *userdata, const char *line);
 
@@ -58,11 +61,24 @@ typedef struct ra_sync_fs {
 
 struct ra_sync_options {
    const char *user;
+   /*
+    * Connect token. dorequest.php only accepts this 16-character value as
+    * t=; the 32-character Web API key from the site is for API_*.php and is
+    * rejected here with invalid_credentials.
+    */
    const char *key;
+   /*
+    * RetroAchievements account password. It is exchanged for a Connect token
+    * with r=login2 and is never sent with any other request.
+    */
+   const char *password;
    int pull; /* download definitions for queue/<hash>.req */
    int push; /* upload queue/unlocks.jsonl */
    int list; /* report card contents without network */
    int dry_run;
+   /* Optional: receives the Connect token that was used or obtained. */
+   char *token_out;
+   size_t token_out_size;
 };
 
 struct ra_sync_stats {

@@ -33,6 +33,8 @@ static char *dup_text(const char *text)
 
 #define TEST_ROOT "/tmp/unifrog-ra-sync-gui-test"
 #define MAX_FORM 2048
+/* dorequest.php issues 16-character Connect tokens. */
+#define TEST_TOKEN "0123456789abcdef"
 
 static int failures;
 
@@ -386,12 +388,32 @@ static void test_login_failure(void)
    login_response = "{\"Success\":false,\"Error\":\"Invalid API key\"}";
    memset(&options, 0, sizeof(options));
    options.user = "Tester";
-   options.key = "bad";
+   options.password = "secret";
    options.pull = 1;
    CHECK_INT(-1, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
       &stats));
    CHECK(strstr(stats.error, "Login failed: Invalid API key") != NULL);
    login_response = "{\"Success\":true}";
+}
+
+static void test_web_api_key_needs_password(void)
+{
+   struct ra_sync_options options;
+   struct ra_sync_stats stats;
+   ra_sync_http_t http = { NULL, fake_post };
+
+   reset_root();
+   memset(&options, 0, sizeof(options));
+   memset(&stats, 0, sizeof(stats));
+   options.user = "Tester";
+   /* A 32-character Web API key is not a dorequest.php credential. */
+   options.key = "0123456789abcdef0123456789abcdef";
+   options.pull = 1;
+   last_form_count = 0;
+   CHECK_INT(-1, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
+      &stats));
+   CHECK(strstr(stats.error, "Web API key only works with API_*.php") != NULL);
+   CHECK_INT(0, last_form_count);
 }
 
 static void test_pull(void)
@@ -410,7 +432,7 @@ static void test_pull(void)
    memset(&options, 0, sizeof(options));
    memset(log_buffer, 0, sizeof(log_buffer));
    options.user = "Tester";
-   options.key = "key";
+   options.key = TEST_TOKEN;
    options.pull = 1;
    CHECK_INT(0, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
       &stats));
@@ -455,7 +477,7 @@ static void test_push(void)
    memset(&options, 0, sizeof(options));
    memset(log_buffer, 0, sizeof(log_buffer));
    options.user = "Tester";
-   options.key = "key";
+   options.key = TEST_TOKEN;
    options.push = 1;
    last_form_count = 0;
    CHECK_INT(0, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
@@ -473,8 +495,9 @@ static void test_push(void)
    CHECK(strstr(log_buffer, "achievement 222: awarded (already unlocked)") !=
       NULL);
 
-   /* Requests: login, award 111, award 222, award 333. */
-   CHECK_INT(4, last_form_count);
+   /* Requests: award 111, award 222, award 333. A Connect token needs no
+      login call, so the login request is gone. */
+   CHECK_INT(3, last_form_count);
    {
       const char *form = NULL;
       int index;
@@ -549,7 +572,7 @@ static void test_rewrite_without_rename(void)
    fs.rename = NULL;
    memset(&options, 0, sizeof(options));
    options.user = "Tester";
-   options.key = "key";
+   options.key = TEST_TOKEN;
    options.push = 1;
    CHECK_INT(0, ra_sync_run(&http, &fs, &options, test_log, NULL, &stats));
    CHECK_INT(1, stats.failed);
@@ -586,6 +609,7 @@ int main(void)
    test_signature_and_md5();
    test_missing_credentials();
    test_login_failure();
+   test_web_api_key_needs_password();
    test_pull();
    test_push();
    test_rewrite_without_rename();

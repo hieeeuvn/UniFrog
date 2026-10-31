@@ -43,8 +43,11 @@ public final class NativeSync {
     /**
      * Runs one sync pass.
      *
-     * @return 0 when the pass completed, -1 when it stopped early
+     * @param key a 16-character Connect token, or empty
+     * @param password the account password, used once to obtain a Connect token
+     * @return the Connect token when the pass completed, null when it stopped
+     *     early (the reason is already in the log and status callbacks)
      */
-    public static native int run(String user, String key, boolean pull,
-        boolean push, boolean list, boolean dryRun, Bridge bridge);
+    public static native String run(String user, String key, String password,
+        boolean pull, boolean push, boolean list, boolean dryRun, Bridge bridge);
 }

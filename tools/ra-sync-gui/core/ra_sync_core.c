@@ -813,11 +813,96 @@ static void sync_list(const ra_sync_fs_t *fs, ra_sync_log_fn log,
    stats->pending = (int)counts.unlocks;
 }
 
+/*
+ * Work out which credential goes into t=. A 16-character value in the key
+ * field is already a Connect token; otherwise the account password is
+ * exchanged for one with r=login2. The 32-character Web API key is never
+ * sent to dorequest.php because the server rejects it.
+ */
+static int resolve_token(const ra_sync_http_t *http,
+   const struct ra_sync_options *options, char *token, size_t token_size,
+   ra_sync_log_fn log, void *log_ud, struct ra_sync_stats *stats)
+{
+   const char *key = options->key ? options->key : "";
+   const char *password = options->password ? options->password : "";
+   char line[RA_SYNC_LINE_MAX];
+   char *response = NULL;
+   char error[RA_SYNC_ERROR_MAX];
+   char message[RA_SYNC_ERROR_MAX];
+   struct ra_buf form;
+
+   token[0] = '\0';
+   if (strlen(key) == RA_SYNC_TOKEN_LEN) {
+      safe_copy(token, token_size, key);
+      snprintf(line, sizeof(line), "Using the Connect token for %s",
+         options->user);
+      log_line(log, log_ud, line);
+      return 0;
+   }
+   if (key[0]) {
+      snprintf(line, sizeof(line),
+         "Ignoring the %u-character Web API key: dorequest.php needs a "
+         "Connect token", (unsigned)strlen(key));
+      log_line(log, log_ud, line);
+   }
+   if (!password[0]) {
+      safe_copy(stats->error, sizeof(stats->error),
+         "Enter your RetroAchievements password once, or a 16-character "
+         "Connect token: the 32-character Web API key only works with "
+         "API_*.php");
+      log_line(log, log_ud, stats->error);
+      return -1;
+   }
+   if (options->dry_run) {
+      log_line(log, log_ud, "Would log in to obtain a Connect token");
+      return 0;
+   }
+
+   buf_init(&form);
+   buf_add(&form, "r=login2&u=");
+   buf_add_encoded(&form, options->user);
+   buf_add(&form, "&p=");
+   buf_add_encoded(&form, password);
+   if (http_post_json(http, &form, &response, error, sizeof(error), log,
+       log_ud) != 0) {
+      safe_copy(stats->error, sizeof(stats->error), error);
+      log_line(log, log_ud, error);
+      buf_free(&form);
+      return -1;
+   }
+   buf_free(&form);
+
+   if (!json_bool(response, "Success", 0) ||
+       json_string(response, "Token", token, token_size) != 0 || !token[0]) {
+      server_message(response, message, sizeof(message));
+      if (!message[0])
+         snprintf(message, sizeof(message),
+            "empty error message from the server");
+      if (contains_case_insensitive(message, "password"))
+         snprintf(stats->error, sizeof(stats->error),
+            "Login failed: %.180s (check the account password)", message);
+      else
+         snprintf(stats->error, sizeof(stats->error),
+            "Login failed: %.160s (user %s, password %u chars)", message,
+            options->user, (unsigned)strlen(password));
+      log_line(log, log_ud, stats->error);
+      free(response);
+      return -1;
+   }
+   free(response);
+   snprintf(line, sizeof(line),
+      "Logged in as %s (Connect token: %u characters)", options->user,
+      (unsigned)strlen(token));
+   log_line(log, log_ud, line);
+   return 0;
+}
+
 int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
    const struct ra_sync_options *options, ra_sync_log_fn log, void *log_ud,
    struct ra_sync_stats *stats)
 {
    struct ra_sync_stats local;
+   char token[RA_SYNC_TOKEN_MAX];
 
    if (!stats)
       stats = &local;
@@ -826,10 +911,13 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
       safe_copy(stats->error, sizeof(stats->error), "invalid sync request");
       return -1;
    }
-   if (!options->list && (!options->user || !options->user[0] ||
-       !options->key || !options->key[0])) {
+   if (!options->list &&
+       (!options->user || !options->user[0] ||
+        ((!options->key || !options->key[0]) &&
+         (!options->password || !options->password[0])))) {
       safe_copy(stats->error, sizeof(stats->error),
-         "Missing credentials: enter your RetroAchievements username and Web API key");
+         "Missing credentials: enter your RetroAchievements username and "
+         "password (or a 16-character Connect token)");
       log_line(log, log_ud, stats->error);
       return -1;
    }
@@ -839,67 +927,15 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
       return 0;
    }
 
-   if (!options->dry_run) {
-      char *response = NULL;
-      char error[RA_SYNC_ERROR_MAX];
-      char message[RA_SYNC_ERROR_MAX];
-      struct ra_buf form;
-
-      {
-         char banner[RA_SYNC_LINE_MAX];
-
-         snprintf(banner, sizeof(banner),
-            "Login as %s (Web API key: %u characters)", options->user,
-            (unsigned)strlen(options->key));
-         log_line(log, log_ud, banner);
-      }
-      buf_init(&form);
-      buf_add(&form, "r=login2&u=");
-      buf_add_encoded(&form, options->user);
-      buf_add(&form, "&t=");
-      buf_add_encoded(&form, options->key);
-      if (http_post_json(http, &form, &response, error, sizeof(error), log,
-          log_ud) != 0) {
-         safe_copy(stats->error, sizeof(stats->error), error);
-         log_line(log, log_ud, error);
-         buf_free(&form);
-         return -1;
-      }
-      buf_free(&form);
-      if (!json_bool(response, "Success", 0)) {
-         server_message(response, message, sizeof(message));
-         if (!message[0])
-            snprintf(message, sizeof(message),
-               "empty error message from the server");
-         if (contains_case_insensitive(message, "password")) {
-            snprintf(stats->error, sizeof(stats->error),
-               "Login failed: %.200s (use the Web API Key, not the account password)",
-               message);
-         } else {
-            /* Repeat the credentials shape here: the log view may be cleared
-               or truncated before the banner line is read. */
-            snprintf(stats->error, sizeof(stats->error),
-               "Login failed: %.160s (user %s, key %u chars)", message,
-               options->user, (unsigned)strlen(options->key));
-         }
-         log_line(log, log_ud, stats->error);
-         free(response);
-         return -1;
-      }
-      free(response);
-      {
-         char line[RA_SYNC_LINE_MAX];
-
-         snprintf(line, sizeof(line), "Logged in as %s", options->user);
-         log_line(log, log_ud, line);
-      }
-   }
+   if (resolve_token(http, options, token, sizeof(token), log, log_ud,
+       stats) != 0)
+      return -1;
+   if (options->token_out && options->token_out_size)
+      safe_copy(options->token_out, options->token_out_size, token);
 
    if (options->pull)
-      sync_pull(http, fs, options, options->user, options->key, log, log_ud,
-         stats);
+      sync_pull(http, fs, options, options->user, token, log, log_ud, stats);
    if (options->push)
-      sync_push(http, fs, options, options->user, options->key, log, log_ud,
-         stats);
+      sync_push(http, fs, options, options->user, token, log, log_ud, stats);
    return 0;
 }

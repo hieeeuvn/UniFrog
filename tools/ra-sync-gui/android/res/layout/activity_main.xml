@@ -38,8 +38,16 @@
         android:id="@+id/key"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Web API key"
+        android:hint="Connect token (16 characters, kept after the first sync)"
         android:inputType="textVisiblePassword"
+        android:maxLines="1" />
+
+    <EditText
+        android:id="@+id/password"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="RA password (used once to get a Connect token)"
+        android:inputType="textPassword"
         android:maxLines="1" />
 
     <LinearLayout

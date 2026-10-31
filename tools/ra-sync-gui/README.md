@@ -25,8 +25,12 @@ Both builds are self-contained: the executables need no runtime DLLs beyond
 what Windows 10/11 ships (WinHTTP, UCRT), and the APK bundles its own native
 code for `arm64-v8a`, `armeabi-v7a` and `x86_64`.
 
-Get your Web API key from retroachievements.org → Settings → Keys. Use the
-**Web API Key**, not the account password.
+Credentials: `dorequest.php` does **not** accept the 32-character Web API key
+from retroachievements.org → Settings → Keys; that value only works with
+`API_*.php`. The apps need a **Connect token**, so they either take an existing
+16-character token or exchange your account password for one with
+`r=login2&p=…` on the first sync. The token is then cached; the password is
+never stored.
 
 ## Windows
 
@@ -36,8 +40,9 @@ Get your Web API key from retroachievements.org → Settings → Keys. Use the
 3. `Browse...` and pick the folder that holds `unifrog_data`
    (`E:\unifrog_data` on most cards). Picking `unifrog_data\achievements`
    also works.
-4. Enter username and Web API key. They are remembered in
-   `%APPDATA%\UniFrogRASync\settings.ini`.
+4. Enter the username and, once, the account password (or a 16-character
+   Connect token). The username and the cached token are remembered in
+   `%APPDATA%\UniFrogRASync\settings.ini`; the password is not saved.
 5. `Sync` does both directions; `Pull definitions`, `Push unlocks` and
    `List card` run a single direction.
 
@@ -54,11 +59,14 @@ an award is rejected.
 3. Press `Choose unifrog_data folder` and pick `unifrog_data` on the card
    (or its `achievements` folder). The app keeps read/write access to that
    folder across restarts.
-4. Enter the same credentials, tick Download/Upload, press `Sync now`.
+4. Enter the same credentials, tick Download/Upload, press `Sync now`. After
+   the first successful login the token is put in the token field, so the
+   password can be left empty from then on.
 5. `Card contents` only reads the card; `Clear log` empties the pane.
 
-Credentials are stored in the app's private preferences file. Uninstalling the
-app removes them.
+The username and the cached Connect token live in the app's private
+preferences file; the password is never saved. Uninstalling the app removes
+them.
 
 ## Layout
 
