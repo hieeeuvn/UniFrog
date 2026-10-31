@@ -316,7 +316,7 @@ static void core_status(struct bridge *bridge, int result,
          goto fail; \
    } while (0)
 
-JNIEXPORT jint JNICALL
+JNIEXPORT jstring JNICALL
 Java_com_unifrog_rasync_NativeSync_run(JNIEnv *env, jclass type,
    jstring user, jstring key, jstring password, jboolean pull, jboolean push,
    jboolean list, jboolean dry_run, jobject callback)
