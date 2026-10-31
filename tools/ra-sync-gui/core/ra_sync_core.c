@@ -876,8 +876,11 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
                "Login failed: %.200s (use the Web API Key, not the account password)",
                message);
          } else {
-            snprintf(stats->error, sizeof(stats->error), "Login failed: %.200s",
-               message);
+            /* Repeat the credentials shape here: the log view may be cleared
+               or truncated before the banner line is read. */
+            snprintf(stats->error, sizeof(stats->error),
+               "Login failed: %.160s (user %s, key %u chars)", message,
+               options->user, (unsigned)strlen(options->key));
          }
          log_line(log, log_ud, stats->error);
          free(response);
