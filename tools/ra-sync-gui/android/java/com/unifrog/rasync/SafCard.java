@@ -278,6 +278,16 @@ final class SafCard implements NativeSync.Bridge {
             }
             byte[] data = buffer.toByteArray();
             lastError = null;
+            if (status == 403) {
+                lastError = "server returned HTTP 403 Forbidden "
+                    + "(request blocked before reaching the API)";
+                return null;
+            }
+            if (status == 429) {
+                lastError = "server returned HTTP 429 (too many requests, "
+                    + "wait a minute and try again)";
+                return null;
+            }
             if (data.length == 0 && status >= 400) {
                 lastError = "server returned HTTP " + status;
                 return null;

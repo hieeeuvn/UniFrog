@@ -845,6 +845,14 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
       char message[RA_SYNC_ERROR_MAX];
       struct ra_buf form;
 
+      {
+         char banner[RA_SYNC_LINE_MAX];
+
+         snprintf(banner, sizeof(banner),
+            "Login as %s (Web API key: %u characters)", options->user,
+            (unsigned)strlen(options->key));
+         log_line(log, log_ud, banner);
+      }
       buf_init(&form);
       buf_add(&form, "r=login2&u=");
       buf_add_encoded(&form, options->user);
@@ -860,6 +868,9 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
       buf_free(&form);
       if (!json_bool(response, "Success", 0)) {
          server_message(response, message, sizeof(message));
+         if (!message[0])
+            snprintf(message, sizeof(message),
+               "empty error message from the server");
          if (contains_case_insensitive(message, "password")) {
             snprintf(stats->error, sizeof(stats->error),
                "Login failed: %.200s (use the Web API Key, not the account password)",
