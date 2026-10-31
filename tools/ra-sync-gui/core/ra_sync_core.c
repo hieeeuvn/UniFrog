@@ -20,8 +20,10 @@
 #define RA_SYNC_CACHE_DIR "cache"
 #define RA_SYNC_UNLOCK_PATH "queue/unlocks.jsonl"
 #define RA_SYNC_UNLOCK_TEMP "queue/unlocks.jsonl.tmp"
+#define RA_SYNC_EARNED_DIR "earned"
 #define RA_SYNC_LINE_MAX 512
 #define RA_SYNC_PULL_MAX 128
+#define RA_SYNC_EARNED_MAX 64
 #define RA_SYNC_SEEN_MAX 512
 #define RA_SYNC_SEEN_KEY_MAX 64
 
@@ -754,6 +756,7 @@ struct list_counts {
    unsigned caches;
    unsigned requests;
    unsigned unlocks;
+   unsigned earned_games;
 };
 
 static int list_cache_cb(void *userdata, const char *name)
@@ -776,6 +779,16 @@ static int list_request_cb(void *userdata, const char *name)
    return 0;
 }
 
+static int list_earned_cb(void *userdata, const char *name)
+{
+   struct list_counts *counts = (struct list_counts *)userdata;
+   size_t length = name ? strlen(name) : 0;
+
+   if (length > 4 && strcmp(name + length - 4, ".txt") == 0)
+      counts->earned_games++;
+   return 0;
+}
+
 static void sync_list(const ra_sync_fs_t *fs, ra_sync_log_fn log,
    void *log_ud, struct ra_sync_stats *stats)
 {
@@ -788,6 +801,8 @@ static void sync_list(const ra_sync_fs_t *fs, ra_sync_log_fn log,
    if (fs->list) {
       (void)fs->list(fs->userdata, RA_SYNC_CACHE_DIR, list_cache_cb, &counts);
       (void)fs->list(fs->userdata, RA_SYNC_QUEUE_DIR, list_request_cb,
+         &counts);
+      (void)fs->list(fs->userdata, RA_SYNC_EARNED_DIR, list_earned_cb,
          &counts);
    }
    if (fs->read && fs->read(fs->userdata, RA_SYNC_UNLOCK_PATH, &data,
@@ -810,7 +825,118 @@ static void sync_list(const ra_sync_fs_t *fs, ra_sync_log_fn log,
    log_line(log, log_ud, line);
    snprintf(line, sizeof(line), "Queued unlocks: %u", counts.unlocks);
    log_line(log, log_ud, line);
+   snprintf(line, sizeof(line), "Earned on card: %u game%s",
+      counts.earned_games, counts.earned_games == 1 ? "" : "s");
+   log_line(log, log_ud, line);
    stats->pending = (int)counts.unlocks;
+}
+
+/*
+ * The firmware records every id it unlocked in earned/<hash>.txt, one id per
+ * line, before or after the queue line reaches the card. A failed queue write
+ * (or a queue the tool already consumed) leaves the id in that list only, so
+ * the award never reaches the server. Push those ids as well; the card keeps
+ * the list, and the server answers "already unlocked" once an id is there.
+ *
+ * The file holds ids only, so the award goes out with the casual flag and no
+ * seconds. The game hash comes from the file name, which is what the server
+ * uses to attach the award to the right game.
+ */
+struct earned_scan {
+   char hashes[RA_SYNC_EARNED_MAX][RA_SYNC_HASH_MAX];
+   unsigned count;
+   int overflow;
+};
+
+static int earned_scan_callback(void *userdata, const char *name)
+{
+   struct earned_scan *scan = (struct earned_scan *)userdata;
+   size_t length;
+
+   if (!name)
+      return 0;
+   length = strlen(name);
+   if (length != 36 || strcmp(name + 32, ".txt") != 0)
+      return 0;
+   if (scan->count >= RA_SYNC_EARNED_MAX) {
+      scan->overflow = 1;
+      return 0;
+   }
+   memcpy(scan->hashes[scan->count], name, 32);
+   scan->hashes[scan->count][32] = '\0';
+   lowercase_hash(scan->hashes[scan->count]);
+   if (!ra_sync_hash_valid(scan->hashes[scan->count]))
+      return 0;
+   scan->count++;
+   return 0;
+}
+
+static void sync_earned(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
+   const struct ra_sync_options *options, const char *user, const char *key,
+   ra_sync_log_fn log, void *log_ud, struct ra_sync_stats *stats)
+{
+   struct earned_scan scan;
+   char seen[RA_SYNC_SEEN_MAX][RA_SYNC_SEEN_KEY_MAX];
+   unsigned seen_count = 0;
+   char line[RA_SYNC_LINE_MAX];
+   unsigned index;
+
+   memset(&scan, 0, sizeof(scan));
+   if (!fs->list || fs->list(fs->userdata, RA_SYNC_EARNED_DIR,
+       earned_scan_callback, &scan) != 0)
+      return;
+
+   for (index = 0; index < scan.count; index++) {
+      char path[RA_SYNC_NAME_MAX + 16];
+      char *data = NULL;
+      size_t size = 0;
+      size_t offset = 0;
+      unsigned ids = 0;
+
+      snprintf(path, sizeof(path), RA_SYNC_EARNED_DIR "/%s.txt",
+         scan.hashes[index]);
+      if (!fs->read || fs->read(fs->userdata, path, &data, &size) != 0)
+         continue;
+      while (offset < size) {
+         unsigned long value = 0;
+         int digits = 0;
+
+         while (offset < size && (data[offset] == ' ' ||
+                data[offset] == '\t' || data[offset] == '\r' ||
+                data[offset] == '\n'))
+            offset++;
+         while (offset < size && data[offset] >= '0' &&
+                data[offset] <= '9' && digits < 9) {
+            value = value * 10ul + (unsigned long)(data[offset] - '0');
+            digits++;
+            offset++;
+         }
+         while (offset < size && data[offset] != '\n')
+            offset++;
+         if (offset < size)
+            offset++;
+         if (digits == 0 || value == 0)
+            continue;
+         if (!push_seen_add(seen, &seen_count, (unsigned)value, 0,
+             scan.hashes[index]))
+            continue;
+         ids++;
+         snprintf(line, sizeof(line),
+            "{\"a\":%lu,\"h\":\"%s\",\"m\":0,\"t\":0}", value,
+            scan.hashes[index]);
+         (void)push_line(http, options, user, key, line, log, log_ud, stats);
+      }
+      free(data);
+      if (ids > 0) {
+         snprintf(line, sizeof(line),
+            "%s: %u achievement%s from the earned list (casual, no "
+            "timestamp)", scan.hashes[index], ids, ids == 1 ? "" : "s");
+         log_line(log, log_ud, line);
+      }
+   }
+   if (scan.overflow)
+      log_line(log, log_ud,
+         "More earned games than one pass handles; sync again for the rest");
 }
 
 /*
@@ -935,7 +1061,10 @@ int ra_sync_run(const ra_sync_http_t *http, const ra_sync_fs_t *fs,
 
    if (options->pull)
       sync_pull(http, fs, options, options->user, token, log, log_ud, stats);
-   if (options->push)
+   if (options->push) {
       sync_push(http, fs, options, options->user, token, log, log_ud, stats);
+      sync_earned(http, fs, options, options->user, token, log, log_ud,
+         stats);
+   }
    return 0;
 }

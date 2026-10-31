@@ -117,6 +117,12 @@ Outputs land in `dist/`, which is not committed.
 - Uploads are idempotent: the server answers "already unlocked" for repeats,
   and the apps treat that as success. A failed award stays in
   `unlocks.jsonl` for the next run.
+- Achievements the console recorded in `achievements/earned/<hash>.txt` are
+  uploaded too, so an award survives a queue line that was never written or
+  that an earlier run already consumed. That list holds ids only, so those
+  awards go out with the casual flag and no `o=`, and the file itself is never
+  modified; the server answers "already unlocked" once the id is on the
+  account.
 - `o=` (seconds since unlock) comes from the card's queue line, so a wildly
   wrong console clock can make the server reject an otherwise valid award.
 - Nothing is deleted from `unifrog_data` except `queue/*.req` files that were

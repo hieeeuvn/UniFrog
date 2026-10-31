@@ -334,6 +334,7 @@ static void reset_root(void)
    make_dir(TEST_ROOT);
    make_dir(TEST_ROOT "/queue");
    make_dir(TEST_ROOT "/cache");
+   make_dir(TEST_ROOT "/earned");
 }
 
 /* ------------------------------------------------------------------ */
@@ -590,6 +591,7 @@ static void test_list(void)
    write_text("cache/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", "{}");
    write_text("cache/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json", "{}");
    write_text("queue/cccccccccccccccccccccccccccccccc.req", "{}");
+   write_text("earned/dddddddddddddddddddddddddddddddd.txt", "9\n");
    write_text("queue/unlocks.jsonl",
       "{\"a\":1}\n{\"a\":2}\n{\"a\":3}");
 
@@ -601,7 +603,65 @@ static void test_list(void)
    CHECK(strstr(log_buffer, "Cached games: 2") != NULL);
    CHECK(strstr(log_buffer, "Pending requests: 1") != NULL);
    CHECK(strstr(log_buffer, "Queued unlocks: 3") != NULL);
+   CHECK(strstr(log_buffer, "Earned on card: 1 game") != NULL);
    CHECK_INT(3, stats.pending);
+}
+
+/*
+ * The firmware records unlocked ids in earned/<hash>.txt. A queue line can go
+ * missing (a rejected SD write, or a queue the tool already consumed), and
+ * then the only proof of the award is that list. The app has to award from it:
+ * the file holds ids only, so the hash comes from the name and the award goes
+ * out casual with no seconds.
+ */
+static void test_earned_recovery(void)
+{
+   struct ra_sync_options options;
+   struct ra_sync_stats stats;
+   ra_sync_http_t http = { NULL, fake_post };
+   int index;
+   int awards = 0;
+
+   reset_root();
+   write_text("earned/0123456789abcdef0123456789abcdef.txt", "111\n222\n");
+
+   memset(&options, 0, sizeof(options));
+   memset(log_buffer, 0, sizeof(log_buffer));
+   options.user = "Tester";
+   options.key = TEST_TOKEN;
+   options.push = 1;
+   last_form_count = 0;
+   CHECK_INT(0, ra_sync_run(&http, &test_fs, &options, test_log, NULL,
+      &stats));
+   CHECK_INT(2, stats.awarded);
+   CHECK_INT(0, stats.failed);
+   CHECK_INT(0, stats.pending);
+   CHECK_INT(2, last_form_count);
+   CHECK(strstr(log_buffer, "2 achievements from the earned list") !=
+      NULL);
+   CHECK(strstr(log_buffer, "achievement 111: awarded") != NULL);
+   CHECK(strstr(log_buffer, "achievement 222: awarded (already unlocked)") !=
+      NULL);
+
+   for (index = 0; index < last_form_count; index++) {
+      const char *form = last_forms[index];
+      char expected[33];
+
+      if (!form_has(form, "r=awardachievement"))
+         continue;
+      awards++;
+      CHECK(form_has(form, "&h=0"));
+      CHECK(form_has(form, "&m=0123456789abcdef0123456789abcdef"));
+      CHECK(!form_has(form, "&o="));
+      if (form_has(form, "&a=111")) {
+         ra_sync_signature(expected, 111, "Tester", 0, 0);
+         CHECK(form_has(form, expected));
+      }
+   }
+   CHECK_INT(2, awards);
+   /* The earned list belongs to the console: the app must not rewrite it. */
+   CHECK_INT(1, fs_exists(NULL,
+      "earned/0123456789abcdef0123456789abcdef.txt"));
 }
 
 int main(void)
@@ -614,6 +674,7 @@ int main(void)
    test_push();
    test_rewrite_without_rename();
    test_list();
+   test_earned_recovery();
 
    if (failures == 0) {
       printf("OK ra-sync-core\n");
