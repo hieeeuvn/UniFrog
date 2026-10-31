@@ -136,10 +136,15 @@ jobs:
           set -eu
           sdk_dir=.deps/android-sdk
           mkdir -p "$sdk_dir/cmdline-tools"
+          rm -rf "$sdk_dir/cmdline-tools/latest"
           curl -sL -o /tmp/cmdline-tools.zip \
             https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q -d /tmp/cmdline-tools /tmp/cmdline-tools.zip
-          mv /tmp/cmdline-tools/cmdline-tools "$sdk_dir/cmdline-tools/latest"
+          if [ -d /tmp/cmdline-tools/cmdline-tools/cmdline-tools ]; then
+            mv /tmp/cmdline-tools/cmdline-tools/cmdline-tools "$sdk_dir/cmdline-tools/latest"
+          else
+            mv /tmp/cmdline-tools/cmdline-tools "$sdk_dir/cmdline-tools/latest"
+          fi
           chmod +x "$sdk_dir/cmdline-tools/latest/bin/sdkmanager"
           export JAVA_HOME="$PWD/.deps/jdk-17.0.21+9"
           export PATH="$JAVA_HOME/bin:$PATH"
