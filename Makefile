@@ -1153,7 +1153,15 @@ sdk: $(SDK_BUILD_STAMP)
 $(SDK_BUILD_STAMP): $(SDK_KERNEL_LIB) | $(BUILD)
 	$(Q)touch $@
 
-$(SDK_KERNEL_LIB): $(DTS_INPUTS) $(TOOLCHAIN_STAMP) | $(BUILD)
+# The SDK is a submodule that deps-sdk clones. Because deps runs in parallel
+# with the ffmpeg dependency, a cold tree can reach the kernel build while the
+# submodule directory is still empty, and the recipe below then dies with
+# "No rule to make target 'check'". Fetch it on demand so the order cannot
+# matter.
+$(SDK)/Makefile:
+	$(Q)$(MAKE) --no-print-directory deps-sdk
+
+$(SDK_KERNEL_LIB): $(DTS_INPUTS) $(TOOLCHAIN_STAMP) $(SDK)/Makefile | $(BUILD)
 	$(Q)$(MAKE) -C $(SDK) check TOOLCHAIN=$(TOOLCHAIN) \
 		CROSS_COMPILE=$(CROSS_COMPILE) CCACHE=$(CCACHE) JOBS=$(JOBS) \
 		SD_MODE=$(SD_MODE) BOARD_DTS=$(abspath $(DTS)) \
