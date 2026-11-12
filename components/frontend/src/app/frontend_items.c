@@ -64,9 +64,34 @@ static int natural_name_compare(const char *a, const char *b)
    return 0;
 }
 
+/*
+ * Listing a system folder with hundreds of games used to compare every new
+ * path against every path already listed, which is quadratic on a handheld
+ * slow enough for it to matter. Keep an open-addressed index of the paths
+ * instead: the cost is one hash per entry.
+ */
+static uint32_t item_dedupe_hash(enum frontend_item_kind kind, const char *path)
+{
+   const unsigned char *cursor = (const unsigned char *)path;
+   uint32_t hash = 2166136261u ^ (uint32_t)kind;
+
+   while (*cursor) {
+      hash ^= *cursor++;
+      hash *= 16777619u;
+   }
+   return hash;
+}
+
+static void item_dedupe_reset(struct frontend_state *fe)
+{
+   for (unsigned i = 0; i < FRONTEND_ITEM_DEDUPE_SLOTS; i++)
+      fe->item_dedupe[i] = 0xFFFFu;
+}
+
 void reset_items(struct frontend_state *fe, const char *title)
 {
    fe->item_count = 0;
+   item_dedupe_reset(fe);
    fe->selected = 0;
    fe->scroll = 0;
    fe->item_generation++;
@@ -76,17 +101,26 @@ void reset_items(struct frontend_state *fe, const char *title)
    fe->needs_draw = 1;
 }
 
-static int item_path_already_listed(const struct frontend_state *fe,
+static int item_path_already_listed(struct frontend_state *fe,
    enum frontend_item_kind kind, const char *path)
 {
+   uint32_t slot;
+
    if (!fe || !path || !path[0])
       return 0;
-   for (unsigned i = 0; i < fe->item_count; i++) {
-      const struct frontend_item *item = &fe->items[i];
+   slot = item_dedupe_hash(kind, path) & (FRONTEND_ITEM_DEDUPE_SLOTS - 1u);
+   for (unsigned probe = 0; probe < 8u; probe++) {
+      uint16_t index = fe->item_dedupe[slot];
 
-      if (item->kind == kind && item->path[0] &&
-          strcmp(item->path, path) == 0)
+      if (index == 0xFFFFu) {
+         /* add_item() appends at item_count right after this check. */
+         fe->item_dedupe[slot] = (uint16_t)fe->item_count;
+         return 0;
+      }
+      if (fe->items[index].kind == kind &&
+          strcmp(fe->items[index].path, path) == 0)
          return 1;
+      slot = (slot + 1u) & (FRONTEND_ITEM_DEDUPE_SLOTS - 1u);
    }
    return 0;
 }

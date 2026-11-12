@@ -25,10 +25,31 @@ const char *active_theme_label(struct frontend_state *fe)
    return "muos";
 }
 
+static uint32_t i18n_key_hash(const char *key)
+{
+   const unsigned char *cursor = (const unsigned char *)key;
+   uint32_t hash = 2166136261u;
+
+   while (*cursor) {
+      hash ^= *cursor++;
+      hash *= 16777619u;
+   }
+   return hash;
+}
+
+/*
+ * Every menu label is translated once per item while a folder is listed, and a
+ * scan of all 256 keys per label is what made large catalogs feel slow. The
+ * bloom filter rejects the labels the language file does not contain, which is
+ * most of them (game and folder names), without touching the key array.
+ */
 const char *tr(struct frontend_state *fe, const char *key)
 {
    if (!fe || !key)
       return key ? key : "";
+   if (fe->i18n_count == 0 ||
+       !(fe->i18n_bloom & (1u << (i18n_key_hash(key) & 31u))))
+      return key;
    for (unsigned i = 0; i < fe->i18n_count; i++) {
       if (strcmp(fe->i18n_key[i], key) == 0)
          return fe->i18n_value[i];
@@ -46,6 +67,7 @@ void load_language(struct frontend_state *fe)
    if (!fe)
       return;
    fe->i18n_count = 0;
+   fe->i18n_bloom = 0;
    if (!fe->language_name[0] || strcmp(fe->language_name, "english") == 0)
       return;
    if (frontend_path_join_ini(path, sizeof(path), FRONTEND_LANGUAGE_ROOT,
@@ -72,6 +94,8 @@ void load_language(struct frontend_state *fe)
          sizeof(fe->i18n_key[0]), line);
       unifrog_text_copy(fe->i18n_value[fe->i18n_count],
          sizeof(fe->i18n_value[0]), sep);
+      fe->i18n_bloom |= 1u << (i18n_key_hash(fe->i18n_key[fe->i18n_count]) &
+         31u);
       fe->i18n_count++;
    }
    fclose(file);
@@ -371,12 +395,90 @@ static int load_muos_scheme_file(const char *path,
    return 0;
 }
 
+/*
+ * A muOS theme ships the layout it was built for, yet every asset is probed
+ * for all six known resolutions in the order the code lists them - on a
+ * 320x240 device the 1280x720, 1024x768, 720x576, 720x480 and 640x480 misses
+ * are five card accesses before a single file is found. Remember which
+ * resolution roots actually exist under the theme directory and skip the rest
+ * without asking the card.
+ */
+#define THEME_ASSET_ROOT_CACHE 8u
+
+struct theme_asset_root {
+   char dir[FRONTEND_MAX_PATH];
+   char root[12];
+   int present;
+};
+
+static struct theme_asset_root theme_asset_root_cache[THEME_ASSET_ROOT_CACHE];
+static unsigned theme_asset_root_next;
+
+static int theme_asset_root_present(const char *dir, const char *root)
+{
+   char path[FRONTEND_MAX_PATH];
+   struct theme_asset_root *slot;
+   unsigned i;
+
+   for (i = 0; i < THEME_ASSET_ROOT_CACHE; i++) {
+      slot = &theme_asset_root_cache[i];
+      if (!slot->dir[0] || strcmp(slot->root, root) != 0 ||
+          strcmp(slot->dir, dir) != 0)
+         continue;
+      return slot->present;
+   }
+   if (frontend_path_join(path, sizeof(path), dir, root) != 0)
+      return 1;
+   slot = &theme_asset_root_cache[theme_asset_root_next %
+      THEME_ASSET_ROOT_CACHE];
+   theme_asset_root_next++;
+   unifrog_text_copy(slot->dir, sizeof(slot->dir), dir);
+   unifrog_text_copy(slot->root, sizeof(slot->root), root);
+   slot->present = frontend_file_exists(path);
+   return slot->present;
+}
+
+static void theme_asset_root_invalidate(void)
+{
+   for (unsigned i = 0; i < THEME_ASSET_ROOT_CACHE; i++)
+      theme_asset_root_cache[i].dir[0] = '\0';
+   theme_asset_root_next = 0;
+}
+
+/* Returns 1 when the resolution prefix of the path does not exist. */
+static int theme_asset_skip(const char *dir, const char *name)
+{
+   char root[12];
+   const char *slash;
+   size_t len;
+   size_t i;
+
+   if (!dir || !name)
+      return 0;
+   slash = strchr(name, '/');
+   if (!slash || slash == name)
+      return 0;
+   len = (size_t)(slash - name);
+   if (len < 3u || len >= sizeof(root))
+      return 0;
+   for (i = 0; i < len; i++) {
+      if ((name[i] >= '0' && name[i] <= '9') || (name[i] == 'x' && i > 0))
+         continue;
+      return 0;
+   }
+   memcpy(root, name, len);
+   root[len] = '\0';
+   return !theme_asset_root_present(dir, root);
+}
+
 static void theme_try_wallpaper(struct unifrog_frontend_lvgl_style *style,
    const char *dir, const char *name)
 {
    char path[FRONTEND_MAX_PATH];
 
    if (!style || style->wallpaper[0] || !dir || !name)
+      return;
+   if (theme_asset_skip(dir, name))
       return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->wallpaper, sizeof(style->wallpaper), path);
@@ -389,6 +491,8 @@ static void theme_override_wallpaper(struct unifrog_frontend_lvgl_style *style,
 
    if (!style || !dir || !name)
       return;
+   if (theme_asset_skip(dir, name))
+      return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->wallpaper, sizeof(style->wallpaper), path);
 }
@@ -399,6 +503,8 @@ static void theme_try_static_image(struct unifrog_frontend_lvgl_style *style,
    char path[FRONTEND_MAX_PATH];
 
    if (!style || style->static_image[0] || !dir || !name)
+      return;
+   if (theme_asset_skip(dir, name))
       return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->static_image, sizeof(style->static_image),
@@ -411,6 +517,8 @@ static void theme_override_static_image(struct unifrog_frontend_lvgl_style *styl
    char path[FRONTEND_MAX_PATH];
 
    if (!style || !dir || !name)
+      return;
+   if (theme_asset_skip(dir, name))
       return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->static_image, sizeof(style->static_image),
@@ -425,6 +533,8 @@ static void theme_try_launch_wallpaper(struct unifrog_frontend_lvgl_style *style
    if (!style || index >= ARRAY_SIZE(style->launch_wallpaper) ||
        style->launch_wallpaper[index][0] || !dir || !name)
       return;
+   if (theme_asset_skip(dir, name))
+      return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->launch_wallpaper[index],
          sizeof(style->launch_wallpaper[index]), path);
@@ -437,6 +547,8 @@ static void theme_try_launch_icon(struct unifrog_frontend_lvgl_style *style,
 
    if (!style || index >= ARRAY_SIZE(style->launch_icon) ||
        style->launch_icon[index][0] || !dir || !name)
+      return;
+   if (theme_asset_skip(dir, name))
       return;
    if (frontend_path_join(path, sizeof(path), dir, name) == 0 && frontend_file_exists(path))
       unifrog_text_copy(style->launch_icon[index],
@@ -1156,7 +1268,9 @@ static int try_load_theme_font_path(const char *dir, const char *rel)
    char path[FRONTEND_MAX_PATH];
    int ret;
 
-   if (!dir || !rel || frontend_path_join(path, sizeof(path), dir, rel) != 0 ||
+   if (!dir || !rel || theme_asset_skip(dir, rel))
+      return -1;
+   if (frontend_path_join(path, sizeof(path), dir, rel) != 0 ||
        !frontend_file_exists(path))
       return -1;
    ret = unifrog_gfx_load_font5x7_file(path);
@@ -1300,6 +1414,7 @@ void load_theme(struct frontend_state *fe)
    uint32_t t0;
    int dir_theme_loaded = 0;
 
+   theme_asset_root_invalidate();
    if (!fe)
       return;
    if (!fe->theme_name[0])

@@ -82,6 +82,8 @@
 #define FRONTEND_ROM_ROOT_MAX 8u
 #define FRONTEND_ROM_SYSTEM_MAP_MAX 48u
 #define FRONTEND_I18N_MAX 256u
+/* Open-addressed index over listed paths: stays O(1) per entry. */
+#define FRONTEND_ITEM_DEDUPE_SLOTS 16384u
 #define FRONTEND_SCHEME_MAX 96u
 #define FRONTEND_ASSOCIATION_MAX 112u
 #define FRONTEND_ASSOCIATION_HANDLER_MAX 8u
@@ -199,6 +201,7 @@ struct frontend_state {
    char item_glyph_path[FRONTEND_MAX_ITEMS][FRONTEND_MAX_PATH];
    const char *item_glyph[FRONTEND_MAX_ITEMS];
    uint8_t item_glyph_resolved[FRONTEND_MAX_ITEMS];
+   uint16_t item_dedupe[FRONTEND_ITEM_DEDUPE_SLOTS];
    unsigned item_generation;
    unsigned glyph_cache_generation;
    char glyph_cache_module[32];
@@ -270,6 +273,7 @@ struct frontend_state {
    char i18n_key[FRONTEND_I18N_MAX][64];
    char i18n_value[FRONTEND_I18N_MAX][128];
    unsigned i18n_count;
+   uint32_t i18n_bloom;
    char storage_profile[16];
    char storage_normal_profile[16];
    char storage_fallback_profile[16];
