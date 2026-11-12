@@ -20,6 +20,8 @@
 
 #include <rc_hash.h>
 
+#include <libretro.h>
+
 #include "test.h"
 
 #define TEST_ROOT "/tmp/unifrog-achievements-test"
@@ -300,6 +302,130 @@ int main(void)
       TEST_EQ_INT(0, read_file(path, queue, sizeof(queue)));
       TEST_CHECK(strstr(queue, "222") != NULL);
       unifrog_achievements_end();
+   }
+
+   /*
+    * Memory the core cannot produce is unknown, not zero. NES save RAM lives at
+    * 0x6000 in rcheevos' address space, and this host publishes no
+    * RETRO_MEMORY_SAVE_RAM: the trigger must be reported unsupported instead of
+    * unlocking on the zero byte that a null region reads as.
+    */
+   {
+      static const uint8_t rom3[] = {
+         'N', 'E', 'S', 0x1a, 1, 1, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         5, 4, 3, 2, 1, 0, 9, 9, 9, 9,
+      };
+      static const char cache3[] =
+         "{\"Success\":true,\"PatchData\":{"
+         "\"ID\":4444,\"Title\":\"Unmapped Game\",\"ConsoleID\":7,"
+         "\"ImageIcon\":\"\",\"RichPresencePatch\":\"\","
+         "\"Achievements\":[{"
+         "\"ID\":333,\"Title\":\"Mapped Byte\","
+         "\"Description\":\"System RAM is readable\","
+         "\"Flags\":3,\"Points\":7,\"MemAddr\":\"0xH0000=5\","
+         "\"Author\":\"tester\",\"BadgeName\":\"00003\","
+         "\"Created\":0,\"Modified\":0},{"
+         "\"ID\":334,\"Title\":\"Save Byte\","
+         "\"Description\":\"Save RAM is not exposed by this core\","
+         "\"Flags\":3,\"Points\":9,\"MemAddr\":\"0xH6000=5\","
+         "\"Author\":\"tester\",\"BadgeName\":\"00004\","
+         "\"Created\":0,\"Modified\":0}],"
+         "\"Leaderboards\":[]}}";
+      char hash3[33];
+      char path3[160];
+
+      TEST_EQ_INT(0, write_file(TEST_ROOT "/rom3.nes", rom3, sizeof(rom3)));
+      TEST_EQ_INT(1, rc_hash_generate_from_file(hash3, NES_CONSOLE,
+         TEST_ROOT "/rom3.nes"));
+      snprintf(path3, sizeof(path3), "%s/%s.json",
+         UNIFROG_ACHIEVEMENTS_CACHE_ROOT, hash3);
+      TEST_EQ_INT(0, write_file(path3, cache3, strlen(cache3)));
+
+      nes_ram[0] = 0;
+      TEST_EQ_INT(0, unifrog_achievements_begin("quicknes",
+         TEST_ROOT "/rom3.nes"));
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(UNIFROG_ACHIEVEMENTS_READY, summary.state);
+      TEST_EQ_INT(2, summary.total);
+      TEST_EQ_INT(1, (int)summary.unsupported);
+      TEST_EQ_INT(0, unifrog_achievements_entry(1, &entry));
+      TEST_EQ_INT(334, entry.id);
+      TEST_EQ_INT(1, entry.unsupported);
+      TEST_EQ_INT(0, entry.unlocked);
+
+      /* The first frame primes rcheevos' memrefs; the second evaluates. */
+      unifrog_achievements_frame();
+      nes_ram[0] = 5;
+      unifrog_achievements_frame();
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(1, summary.unlocked);
+      TEST_EQ_INT(7, summary.points_unlocked);
+      TEST_CHECK(unifrog_achievements_toast() != NULL);
+      unifrog_achievements_end();
+   }
+
+   /*
+    * The same console read through the core's SET_MEMORY_MAPS layout. gpsp
+    * publishes disjoint banks at their real addresses (GBA IWRAM at
+    * 0x03000000), and rcheevos only finds the right bytes while it has the map.
+    */
+   {
+      static const uint8_t rom4[] = {
+         'N', 'E', 'S', 0x1a, 1, 1, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         7, 7, 1, 2, 3, 4, 5, 6, 7, 8,
+      };
+      static const char cache4[] =
+         "{\"Success\":true,\"PatchData\":{"
+         "\"ID\":4545,\"Title\":\"Mapped Game\",\"ConsoleID\":7,"
+         "\"ImageIcon\":\"\",\"RichPresencePatch\":\"\","
+         "\"Achievements\":[{"
+         "\"ID\":444,\"Title\":\"Mapped Read\","
+         "\"Description\":\"Read through the memory map\","
+         "\"Flags\":3,\"Points\":3,\"MemAddr\":\"0xH0000=7\","
+         "\"Author\":\"tester\",\"BadgeName\":\"00005\","
+         "\"Created\":0,\"Modified\":0}],"
+         "\"Leaderboards\":[]}}";
+      struct retro_memory_descriptor descriptor;
+      struct retro_memory_map map;
+      char hash4[33];
+      char path4[160];
+
+      TEST_EQ_INT(0, write_file(TEST_ROOT "/rom4.nes", rom4, sizeof(rom4)));
+      TEST_EQ_INT(1, rc_hash_generate_from_file(hash4, NES_CONSOLE,
+         TEST_ROOT "/rom4.nes"));
+      snprintf(path4, sizeof(path4), "%s/%s.json",
+         UNIFROG_ACHIEVEMENTS_CACHE_ROOT, hash4);
+      TEST_EQ_INT(0, write_file(path4, cache4, strlen(cache4)));
+
+      memset(&descriptor, 0, sizeof(descriptor));
+      descriptor.ptr = nes_ram;
+      descriptor.offset = 0;
+      descriptor.start = 0;
+      descriptor.select = 0;
+      descriptor.disconnect = 0;
+      descriptor.len = sizeof(nes_ram);
+      map.descriptors = &descriptor;
+      map.num_descriptors = 1;
+
+      nes_ram[0] = 0;
+      unifrog_achievements_set_memory_map(&map);
+      TEST_EQ_INT(0, unifrog_achievements_begin("quicknes",
+         TEST_ROOT "/rom4.nes"));
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(UNIFROG_ACHIEVEMENTS_READY, summary.state);
+      TEST_EQ_INT(0, summary.unsupported);
+      unifrog_achievements_frame();
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(0, summary.unlocked);
+
+      nes_ram[0] = 7;
+      unifrog_achievements_frame();
+      unifrog_achievements_summary(&summary);
+      TEST_EQ_INT(1, summary.unlocked);
+      unifrog_achievements_end();
+      unifrog_achievements_set_memory_map(NULL);
    }
 
    /* An unmapped core must not guess a hash or use a stale game. */

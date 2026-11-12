@@ -39,6 +39,8 @@ struct unifrog_achievements_summary {
    int hardcore;
    unsigned total;
    unsigned unlocked;
+   /* Achievements whose memory this core cannot read; never evaluated. */
+   unsigned unsupported;
    unsigned points_total;
    unsigned points_unlocked;
    unsigned pending_uploads;
@@ -51,6 +53,8 @@ struct unifrog_achievements_entry {
    unsigned id;
    unsigned points;
    int unlocked;
+   /* Set when the core does not expose the memory the trigger needs. */
+   int unsupported;
    /* -1 when the achievement has no measured progress. */
    int progress_percent;
    char title[UNIFROG_ACHIEVEMENTS_TITLE_MAX];

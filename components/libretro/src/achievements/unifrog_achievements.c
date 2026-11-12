@@ -45,6 +45,8 @@
 #define ACHIEVEMENTS_PENDING_MAX 16u
 #define ACHIEVEMENTS_PENDING_LINE_MAX 112u
 #define ACHIEVEMENTS_QUEUE_RETRY_MS 2000u
+#define ACHIEVEMENTS_MEMORY_WAIT_MS 5000u
+#define ACHIEVEMENTS_UNREADABLE_MAX 8u
 
 struct achievements_pending_unlock {
    unsigned id;
@@ -79,6 +81,11 @@ struct achievements_state {
    int game_loaded;
    rc_libretro_memory_regions_t regions;
    int regions_ready;
+   int memory_wait;
+   uint32_t memory_wait_ms;
+   uint32_t unreadable[ACHIEVEMENTS_UNREADABLE_MAX];
+   unsigned unreadable_count;
+   unsigned activated;
    unsigned unlock_count;
    int progress_dirty;
    uint32_t progress_saved_ms;
@@ -372,6 +379,7 @@ static void achievements_activate(void)
 
    rc_runtime_init(&achievements.runtime);
    achievements.runtime_ready = 1;
+   achievements.activated = 0;
    for (i = 0; i < achievements.game.num_achievements; i++) {
       const rc_api_achievement_definition_t *definition =
          &achievements.game.achievements[i];
@@ -379,8 +387,9 @@ static void achievements_activate(void)
          continue;
       if (!definition->definition || !definition->definition[0])
          continue;
-      (void)rc_runtime_activate_achievement(&achievements.runtime,
-         definition->id, definition->definition, NULL, 0);
+      if (rc_runtime_activate_achievement(&achievements.runtime,
+          definition->id, definition->definition, NULL, 0) == RC_OK)
+         achievements.activated++;
    }
 }
 
@@ -698,6 +707,11 @@ static void achievements_event(const rc_runtime_event_t *event)
    case RC_RUNTIME_EVENT_ACHIEVEMENT_PROGRESS_UPDATED:
       achievements.progress_dirty = 1;
       break;
+   case RC_RUNTIME_EVENT_ACHIEVEMENT_DISABLED:
+      UF_LOG_WARN("achievements",
+         "event=achievement_unsupported id=%u address=0x%06X",
+         event->id, (unsigned)event->value);
+      break;
    default:
       break;
    }
@@ -712,6 +726,41 @@ static const struct retro_memory_map *achievements_memory_map;
 void unifrog_achievements_set_memory_map(const struct retro_memory_map *map)
 {
    achievements_memory_map = map;
+}
+
+/*
+ * rcheevos reports the regions it registered through this callback. Without it
+ * a mapping mistake stays invisible: the engine simply evaluates triggers
+ * against whatever the region table ended up holding.
+ */
+static void achievements_verbose(const char *message)
+{
+   if (!message || !message[0])
+      return;
+   UF_LOG_INFO("achievements", "rcheevos: %s", message);
+}
+
+/*
+ * An address the core cannot answer is unknown, not zero. rcheevos only knows
+ * the difference when the frontend says so, and until then it compares every
+ * condition on that address against 0 - which is how a condition such as
+ * "value = 0" unlocks on its own. Name the address once and let rcheevos
+ * disable the achievements that depend on it.
+ */
+static void achievements_invalidate_address(uint32_t address)
+{
+   unsigned i;
+
+   for (i = 0; i < achievements.unreadable_count; i++) {
+      if (achievements.unreadable[i] == address)
+         return;
+   }
+   UF_LOG_WARN("achievements", "event=address_unreadable address=0x%06X",
+      (unsigned)address);
+   if (achievements.unreadable_count < ACHIEVEMENTS_UNREADABLE_MAX)
+      achievements.unreadable[achievements.unreadable_count++] = address;
+   if (achievements.runtime_ready)
+      rc_runtime_invalidate_address(&achievements.runtime, address);
 }
 
 static uint32_t achievements_peek(uint32_t address, uint32_t num_bytes,
@@ -729,8 +778,10 @@ static uint32_t achievements_peek(uint32_t address, uint32_t num_bytes,
    if (!achievements.regions_ready)
       return 0;
    if (rc_libretro_memory_read(&achievements.regions, address, buffer,
-       num_bytes) != num_bytes)
+       num_bytes) != num_bytes) {
+      achievements_invalidate_address(address);
       return 0;
+   }
    for (i = 0; i < num_bytes; i++)
       value |= (uint32_t)buffer[i] << (i * 8u);
    return value;
@@ -786,9 +837,67 @@ static void achievements_core_memory_info(uint32_t id,
    info->size = achievements_memory_size(id);
 }
 
+/* True only when this core can actually produce bytes for the address. */
+static int achievements_address_readable(uint32_t address)
+{
+   if (!achievements.regions_ready)
+      return 0;
+   return rc_libretro_memory_find_avail(&achievements.regions, address,
+      NULL) != NULL;
+}
+
+static unsigned achievements_unsupported_count(void)
+{
+   unsigned i;
+   unsigned count = 0;
+
+   if (!achievements.runtime_ready)
+      return 0;
+   for (i = 0; i < achievements.game.num_achievements; i++) {
+      const rc_api_achievement_definition_t *definition =
+         &achievements.game.achievements[i];
+      const rc_trigger_t *trigger;
+
+      if (definition->category != RC_ACHIEVEMENT_CATEGORY_CORE)
+         continue;
+      trigger = rc_runtime_get_achievement(&achievements.runtime,
+         definition->id);
+      if (trigger && trigger->state == RC_TRIGGER_STATE_DISABLED)
+         count++;
+   }
+   return count;
+}
+
+/*
+ * Disable every achievement whose memory this core cannot read, the way
+ * RetroArch does: an unsupported achievement is reported, never evaluated
+ * against a zero byte forever.
+ */
+static void achievements_activate_memory(void)
+{
+   unsigned unsupported;
+
+   if (!achievements.runtime_ready)
+      return;
+   rc_runtime_validate_addresses(&achievements.runtime, achievements_event,
+      achievements_address_readable);
+   unsupported = achievements_unsupported_count();
+   if (unsupported) {
+      char status[UNIFROG_ACHIEVEMENTS_STATUS_MAX];
+
+      snprintf(status, sizeof(status), "Tracking (%u unsupported)",
+         unsupported);
+      achievements_set_status(UNIFROG_ACHIEVEMENTS_READY, status);
+   }
+}
+
 static void achievements_clear_game(void)
 {
    achievements.regions_ready = 0;
+   achievements.memory_wait = 0;
+   achievements.memory_wait_ms = 0;
+   achievements.unreadable_count = 0;
+   achievements.activated = 0;
    memset(&achievements.regions, 0, sizeof(achievements.regions));
    if (achievements.runtime_ready) {
       rc_runtime_destroy(&achievements.runtime);
@@ -812,6 +921,7 @@ int unifrog_achievements_begin(const char *core_id, const char *content_path)
       achievements.initialized = 1;
       achievements_config_load();
       achievements_ensure_dirs();
+      rc_libretro_init_verbose_message_callback(achievements_verbose);
    }
    achievements_clear_game();
    achievements_copy(achievements.core_id, sizeof(achievements.core_id),
@@ -857,18 +967,28 @@ int unifrog_achievements_begin(const char *core_id, const char *content_path)
    achievements_load_progress();
    achievements_load_earned();
    if (achievements_init_memory() != 0) {
-      achievements_set_status(UNIFROG_ACHIEVEMENTS_ERROR,
-         "Core memory not available");
-      achievements_clear_game();
+      /*
+       * Some cores only expose RAM once they have run a frame. RetroArch
+       * retries for exactly this reason; failing here would silence
+       * achievements for the rest of the session.
+       */
+      achievements.memory_wait = 1;
+      achievements.memory_wait_ms = unifrog_perf_time_ms();
+      achievements_set_status(UNIFROG_ACHIEVEMENTS_WAITING_CACHE,
+         "Waiting for core memory");
       return 0;
    }
    achievements.active = 1;
    achievements.progress_saved_ms = unifrog_perf_time_ms();
    achievements_set_status(UNIFROG_ACHIEVEMENTS_READY, "Tracking");
+   achievements_activate_memory();
    UF_LOG_INFO("achievements",
-      "event=begin core=%s console=%u hash=%s achievements=%u",
+      "event=begin core=%s console=%u hash=%s game=%u title=%s "
+      "achievements=%u activated=%u unsupported=%u",
       achievements.core_id, achievements.console_id, achievements.hash,
-      achievements.game.num_achievements);
+      achievements.game.id, achievements.title,
+      achievements.game.num_achievements, achievements.activated,
+      achievements_unsupported_count());
    return 0;
 }
 
@@ -891,6 +1011,26 @@ void unifrog_achievements_frame(void)
     * failure from losing an unlock without touching the card every frame.
     */
    now_ms = unifrog_perf_time_ms();
+   if (achievements.memory_wait) {
+      if ((uint32_t)(now_ms - achievements.memory_wait_ms) <=
+          ACHIEVEMENTS_MEMORY_WAIT_MS) {
+         if (achievements_init_memory() == 0) {
+            achievements.memory_wait = 0;
+            achievements.active = 1;
+            achievements_set_status(UNIFROG_ACHIEVEMENTS_READY, "Tracking");
+            achievements_activate_memory();
+            UF_LOG_INFO("achievements",
+               "event=memory_ready core=%s console=%u regions=%u "
+               "unsupported=%u", achievements.core_id,
+               achievements.console_id, achievements.regions.count,
+               achievements_unsupported_count());
+         }
+      } else {
+         achievements.memory_wait = 0;
+         achievements_set_status(UNIFROG_ACHIEVEMENTS_ERROR,
+            "Core memory not available");
+      }
+   }
    if (achievements.pending_count &&
        (uint32_t)(now_ms - achievements.queue_retry_ms) >=
        ACHIEVEMENTS_QUEUE_RETRY_MS)
@@ -987,6 +1127,8 @@ void unifrog_achievements_summary(struct unifrog_achievements_summary *summary)
          } else if (achievements_is_earned(definition->id)) {
             summary->unlocked++;
             summary->points_unlocked += definition->points;
+         } else if (trigger && trigger->state == RC_TRIGGER_STATE_DISABLED) {
+            summary->unsupported++;
          }
       }
    }
@@ -1050,6 +1192,8 @@ int unifrog_achievements_entry(unsigned index,
             entry->unlocked = 1;
          else if (achievements_is_earned(definition->id))
             entry->unlocked = 1;
+         else if (trigger && trigger->state == RC_TRIGGER_STATE_DISABLED)
+            entry->unsupported = 1;
          if (rc_runtime_get_achievement_measured(&achievements.runtime,
              definition->id, &measured, &target) && target > 0 &&
              target <= 1000000u) {

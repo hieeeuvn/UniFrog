@@ -132,6 +132,18 @@ for the wrong console is valid MD5 but never matches the server.
 - **Unlocks stay in the queue**: run `--push-only` and read the error. Expired
   sessions, a wrong API key, or Cloudflare blocks are reported and the entry is
   kept for the next run.
+- **An achievement shows as unsupported**: the core does not expose the memory
+  its trigger needs, so it is never evaluated. The log names it
+  (`event=achievement_unsupported id=… address=0x…`). gpsp, for example, does
+  not publish GBA save RAM, so achievements that read `0x048000` stay
+  unsupported there; every other frontend that runs rcheevos behaves the same.
+- **Read the memory layout rcheevos built**: every `Registered …` and
+  `Could not map region …` message appears in the log as `rcheevos: …`. On a
+  healthy GBA session the first two lines report IWRAM from descriptor 1 offset
+  `0x008000` and EWRAM from descriptor 2.
+- **"Waiting for core memory"**: the core had no RAM at load time. The engine
+  retries for five seconds (some cores allocate on the first `retro_run`) and
+  then reports `Core memory not available`.
 
 ## Developer notes
 
@@ -160,6 +172,19 @@ for the wrong console is valid MD5 but never matches the server.
   engine logs `event=memory_unmapped` and stops tracking instead of evaluating
   triggers against zeros; `event=memory_regions` reports how many descriptors
   the core offered and how many bytes ended up as null filler.
+- An address the core cannot answer is *unknown*, never zero. After the region
+  table is built, `rc_runtime_validate_addresses()` disables every achievement
+  whose memory is missing (RetroArch does the same), and any read that still
+  falls short calls `rc_runtime_invalidate_address()` so the dependants stop
+  instead of inheriting a zero byte. Without that step a condition like
+  `byte == 0` is true forever on an unmapped address, which is how a set
+  unlocks without anyone playing it.
+- `rc_libretro_init_verbose_message_callback()` routes rcheevos' own region
+  report into the app log, so a mapping problem is visible on the device
+  without a debugger.
+- Memory initialisation is retried from the frame loop for five seconds because
+  some cores publish RAM only after the first `retro_run`; giving up at load
+  time would leave achievements off for the whole session.
 - rcheevos only serializes *unfinished* triggers, so earned ids are stored
   separately in `earned/<hash>.txt` (one id per line). The engine imports ids
   from `queue/unlocks.jsonl` when that file predates the earned list, so
