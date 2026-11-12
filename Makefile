@@ -926,6 +926,8 @@ deps-ubuntu:
 	@echo "sudo apt-get update && sudo apt-get install -y git make gcc perl device-tree-compiler tcc zlib1g-dev ccache curl xz-utils zip"
 
 deps-sdk:
+	$(Q)git rev-parse --git-dir >/dev/null 2>&1 || { \
+		echo "  SKIP    deps-sdk (not a git checkout)"; exit 0; }
 	git config --global --add safe.directory "$(abspath .)" 2>/dev/null || true
 	git submodule sync unifrog-hcrtos-sdk
 	git submodule update --init --depth 1 --filter=blob:none --jobs "$(JOBS)" \
@@ -1153,15 +1155,12 @@ sdk: $(SDK_BUILD_STAMP)
 $(SDK_BUILD_STAMP): $(SDK_KERNEL_LIB) | $(BUILD)
 	$(Q)touch $@
 
-# The SDK is a submodule that deps-sdk clones. Because deps runs in parallel
-# with the ffmpeg dependency, a cold tree can reach the kernel build while the
-# submodule directory is still empty, and the recipe below then dies with
-# "No rule to make target 'check'". Fetch it on demand so the order cannot
-# matter.
-$(SDK)/Makefile:
-	$(Q)$(MAKE) --no-print-directory deps-sdk
-
-$(SDK_KERNEL_LIB): $(DTS_INPUTS) $(TOOLCHAIN_STAMP) $(SDK)/Makefile | $(BUILD)
+# The SDK is a submodule that deps-sdk clones. deps runs with the jobserver, so
+# the ffmpeg dependency can reach the kernel build while that clone is still in
+# flight and this recipe then dies with "No rule to make target 'check'" on the
+# empty submodule directory. Ordering on the same target keeps the clone ahead of
+# the build without running it twice.
+$(SDK_KERNEL_LIB): $(DTS_INPUTS) $(TOOLCHAIN_STAMP) | $(BUILD) deps-sdk
 	$(Q)$(MAKE) -C $(SDK) check TOOLCHAIN=$(TOOLCHAIN) \
 		CROSS_COMPILE=$(CROSS_COMPILE) CCACHE=$(CCACHE) JOBS=$(JOBS) \
 		SD_MODE=$(SD_MODE) BOARD_DTS=$(abspath $(DTS)) \
