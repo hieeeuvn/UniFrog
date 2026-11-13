@@ -87,6 +87,57 @@ folder, compares the games against
 list of games that still have no box art. Open that file with
 **Apps -> File Browser** to see it on the device.
 
+## Overlay paks
+
+An overlay pak draws a small panel over a game while a core runs. It cannot use
+JS2300: the script runtime is either standalone, the launcher, or the core
+itself, so a third-party script cannot own a frame during somebody else's game.
+An overlay pak therefore only *describes* the panel, and the firmware draws it
+natively into the presenter buffer after every core frame.
+
+```text
+unifrog_data/apps/overlay-stats
+└── overlay.ini        <- no app.ini, so it is not listed as a tool
+```
+
+| Key        | Meaning |
+| ---------- | ------- |
+| `title`    | Name shown in the selector. Defaults to the folder name. |
+| `position` | `top-left`, `top-right` (default), `bottom-left`, `bottom-right`. |
+| `line1`..`line4` | Up to three tokens each, comma separated. |
+
+Tokens:
+
+| Token          | Shows |
+| -------------- | ----- |
+| `clock`        | Device time as `HH:MM`. |
+| `battery`      | Charge percent, or `--%` when the battery is unreadable. |
+| `achievements` | Unlocked/total for the running game, `no ACH` when it is off. |
+| `points`       | Achievement points earned in this game. |
+| `game`         | The achievement title of the running game. |
+
+Example, `paks/overlay-stats/overlay.ini`:
+
+```ini
+title=Stats
+position=top-right
+line1=clock
+line2=battery
+line3=achievements
+```
+
+Turn it on with **Config -> Custom -> Game Overlay**, which cycles through
+`off` and every overlay pak on the card; the choice is saved as `overlay_pak` in
+`unifrog.ini`. Folders with both `app.ini` and `overlay.ini` stay ordinary apps,
+overlay folders are skipped by the Apps list, and a selected pak that is deleted
+simply draws nothing.
+
+The panel is repainted every frame because the presenter rotates framebuffers,
+but only its own rows are flushed to memory, so the cost is a few kilobytes
+instead of the whole 150 KiB frame. Keep the overlay to three or four short
+lines; the achievement unlock banner also uses the top of the screen, so prefer
+`bottom-right` if you play with achievements enabled.
+
 ## Security
 
 A pak runs with the same rights as any script in `/unifrog_data/scripts`: it can

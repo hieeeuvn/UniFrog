@@ -624,6 +624,24 @@ static void host_draw_achievement_toast(void)
       unifrog_fb_flush_buffer(&host.presenter.fb, buffer);
 }
 
+/*
+ * Overlay paks describe a panel in overlay.ini; the host draws it after the
+ * core frame so a dropped-in folder can show clock, battery and progress
+ * without owning the script runtime. Only the panel rows are flushed.
+ */
+static void host_draw_overlay_pak(void)
+{
+   struct unifrog_surface surface;
+
+   if (!host.presenter_open)
+      return;
+   surface = unifrog_fb_surface_for_buffer(&host.presenter.fb,
+      host.presenter.active_buffer);
+   if (!surface.pixels)
+      return;
+   (void)unifrog_libretro_overlay_draw(&surface, &host.battery);
+}
+
 static void host_draw_battery_warning(uint32_t now_ms)
 {
    struct unifrog_surface surface;
@@ -977,7 +995,8 @@ out_content_prepare:
    unifrog_achievements_set_memory_access(achievements_core_memory_data,
       achievements_core_memory_size);
    unifrog_achievements_set_memory_map(achievements_core_memory_map());
-   (void)unifrog_achievements_begin(core->id, path);
+       (void)unifrog_achievements_begin(core->id, path);
+   unifrog_libretro_overlay_begin();
 
    /*
     * Libretro permits AV information to depend on the loaded content.
@@ -1158,6 +1177,7 @@ out_content_prepare:
       }
       host_update_battery_warning(unifrog_perf_time_ms());
       host_draw_achievement_toast();
+      host_draw_overlay_pak();
       run_count = unifrog_perf_elapsed(run_start, unifrog_perf_count());
       vsync_count = host.presenter_open && host.video_frames != video_before ?
          host.presenter.last_vsync_count : 0;

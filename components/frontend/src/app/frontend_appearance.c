@@ -1,8 +1,52 @@
 #include "frontend_internal.h"
 
+static const char *overlay_pak_label(struct frontend_state *fe)
+{
+   unsigned index;
+
+   if (!fe->overlay_pak[0] || strcmp(fe->overlay_pak, "off") == 0)
+      return "off";
+   for (index = 0; index < fe->overlay_count; index++) {
+      if (strcmp(fe->overlay_ids[index], fe->overlay_pak) == 0)
+         return fe->overlay_titles[index];
+   }
+   return fe->overlay_pak;
+}
+
+static void cycle_overlay_pak(struct frontend_state *fe)
+{
+   unsigned index;
+
+   if (fe->overlay_count == 0) {
+      frontend_set_status(fe, "no overlay pak in /unifrog_data/apps");
+      unifrog_text_copy(fe->overlay_pak, sizeof(fe->overlay_pak), "off");
+      return;
+   }
+   if (!fe->overlay_pak[0] || strcmp(fe->overlay_pak, "off") == 0) {
+      unifrog_text_copy(fe->overlay_pak, sizeof(fe->overlay_pak),
+         fe->overlay_ids[0]);
+      frontend_set_status(fe, "game overlay %s", fe->overlay_titles[0]);
+      return;
+   }
+   for (index = 0; index < fe->overlay_count; index++) {
+      if (strcmp(fe->overlay_ids[index], fe->overlay_pak) == 0)
+         break;
+   }
+   if (index + 1u < fe->overlay_count) {
+      unifrog_text_copy(fe->overlay_pak, sizeof(fe->overlay_pak),
+         fe->overlay_ids[index + 1u]);
+      frontend_set_status(fe, "game overlay %s",
+         fe->overlay_titles[index + 1u]);
+   } else {
+      unifrog_text_copy(fe->overlay_pak, sizeof(fe->overlay_pak), "off");
+      frontend_set_status(fe, "game overlay off");
+   }
+}
+
 void frontend_show_custom(struct frontend_state *fe)
 {
    reset_items(fe, "Custom");
+   (void)frontend_overlays_load(fe);
    fe->view = FRONTEND_VIEW_CUSTOM;
    add_item(fe, "Theme", active_theme_label(fe), FRONTEND_ITEM_ACTION, "theme",
       NULL);
@@ -16,6 +60,8 @@ void frontend_show_custom(struct frontend_state *fe)
       FRONTEND_ITEM_ACTION, "boxart_hide", NULL);
    add_item(fe, "ROM Artwork", fe->artwork_layout, FRONTEND_ITEM_ACTION,
       "artwork", NULL);
+   add_item(fe, "Game Overlay", overlay_pak_label(fe), FRONTEND_ITEM_ACTION,
+      "overlay_pak", NULL);
    add_item(fe, "Navigation Sound", on_off_label(fe->sound_enabled),
       FRONTEND_ITEM_ACTION, "sound", NULL);
    add_item(fe, "Log Detail", fe->log_level, FRONTEND_ITEM_ACTION,
@@ -381,6 +427,13 @@ int frontend_appearance_activate(struct frontend_state *fe,
       cycle_artwork_layout(fe);
       save_settings(fe);
       frontend_show_artwork(fe);
+      restore_view_selection(fe, selected, fe->scroll);
+      return 1;
+   }
+   if (strcmp(item->path, "overlay_pak") == 0) {
+      cycle_overlay_pak(fe);
+      save_settings(fe);
+      frontend_show_custom(fe);
       restore_view_selection(fe, selected, fe->scroll);
       return 1;
    }

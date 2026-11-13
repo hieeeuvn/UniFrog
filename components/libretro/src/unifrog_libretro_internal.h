@@ -398,6 +398,10 @@ const char *framebuffer_format_label(int framebuffer_format);
 const char *input_profile_opt_value(int input_profile);
 int sanitize_input_profile(int input_profile);
 unsigned present_flags_for_display_mode(int display_mode);
+/* Game overlay paks: reload the selection, then draw over the game frame. */
+void unifrog_libretro_overlay_begin(void);
+int unifrog_libretro_overlay_draw(struct unifrog_surface *surface,
+   const struct unifrog_battery_status *battery);
 void host_configure_options(const struct unifrog_libretro_run_options *options);
 uintptr_t host_read_gp(void);
 uintptr_t host_expected_gp(void);

@@ -64,6 +64,9 @@ If you copy or remove files in those locations, Unifrog updates with them.
 - Add tools as app paks: a folder under `unifrog_data/apps` with an `app.ini`
   and a JS2300 script appears in Apps without rebuilding the firmware. See
   [app-paks.md](app-paks.md).
+- Show a game overlay pak: a folder under `unifrog_data/apps` with an
+  `overlay.ini` draws clock, battery and achievement progress over gameplay.
+  Pick it under Config -> Custom -> Game Overlay. See [app-paks.md](app-paks.md).
 - Keep scripted actions separate from core launcher content.
 
 ### Launch defaults

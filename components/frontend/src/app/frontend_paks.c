@@ -61,6 +61,23 @@ int frontend_paks_icon(const struct frontend_state *fe, unsigned item,
    return -1;
 }
 
+/* Overlay paks carry overlay.ini instead of a launchable entry script. */
+static int frontend_overlay_manifest(const char *pak_dir, char *out,
+   size_t size)
+{
+   char path[FRONTEND_MAX_PATH];
+
+   if (!pak_dir)
+      return 0;
+   if (frontend_path_join(path, sizeof(path), pak_dir, "overlay.ini") != 0)
+      return 0;
+   if (!frontend_file_exists(path))
+      return 0;
+   if (out && size > 0)
+      unifrog_text_copy(out, size, path);
+   return 1;
+}
+
 static int pak_add(struct frontend_state *fe, const char *pak_name)
 {
    char pak_dir[FRONTEND_MAX_PATH];
@@ -80,8 +97,10 @@ static int pak_add(struct frontend_state *fe, const char *pak_name)
       return 0;
    if (frontend_path_join(manifest, sizeof(manifest), pak_dir, "app.ini") != 0 ||
        !frontend_file_exists(manifest)) {
-      unifrog_log("frontend app pak skipped name=%s reason=no_manifest\n",
-         pak_name);
+      /* Overlay paks are listed by Game Overlay, not in the Apps menu. */
+      if (!frontend_overlay_manifest(pak_dir, NULL, 0))
+         unifrog_log("frontend app pak skipped name=%s reason=no_manifest\n",
+            pak_name);
       return 0;
    }
    unifrog_text_copy(title, sizeof(title), pak_name);
@@ -126,6 +145,7 @@ unsigned frontend_paks_load(struct frontend_state *fe)
    if (!fe)
       return 0;
    fe->pak_icon_count = 0;
+   (void)frontend_overlays_load(fe);
    dir = unifrog_storage_opendir_resilient(FRONTEND_APP_ROOT, "app_paks", 4,
       120);
    if (!dir)
@@ -141,5 +161,54 @@ unsigned frontend_paks_load(struct frontend_state *fe)
    closedir(dir);
    unifrog_log("frontend app paks seen=%u loaded=%u ms=%lu\n", seen, loaded,
       (unsigned long)(unifrog_perf_time_ms() - start_ms));
+   return loaded;
+}
+/*
+ * Overlay paks are folders with an overlay.ini; the libretro host draws the
+ * panel natively during gameplay, so only the list of choices is kept here.
+ */
+unsigned frontend_overlays_load(struct frontend_state *fe)
+{
+   DIR *dir;
+   struct dirent *entry;
+   char pak_dir[FRONTEND_MAX_PATH];
+   char manifest[FRONTEND_MAX_PATH];
+   char title[48];
+   struct stat st;
+   unsigned loaded = 0;
+
+   if (!fe)
+      return 0;
+   fe->overlay_count = 0;
+   dir = unifrog_storage_opendir_resilient(FRONTEND_APP_ROOT, "app_overlays", 4,
+      120);
+   if (!dir)
+      return 0;
+   while ((entry = readdir(dir)) != NULL) {
+      if (entry->d_name[0] == '.')
+         continue;
+      if (fe->overlay_count >= FRONTEND_OVERLAY_MAX)
+         break;
+      if (frontend_path_join(pak_dir, sizeof(pak_dir), FRONTEND_APP_ROOT,
+          entry->d_name) != 0)
+         continue;
+      if (stat(pak_dir, &st) != 0 || !S_ISDIR(st.st_mode))
+         continue;
+      if (!frontend_overlay_manifest(pak_dir, manifest, sizeof(manifest)))
+         continue;
+      title[0] = '\0';
+      (void)frontend_read_file_key(title, sizeof(title), manifest, "title");
+      if (!title[0])
+         unifrog_text_copy(title, sizeof(title), entry->d_name);
+      unifrog_text_copy(fe->overlay_ids[fe->overlay_count],
+         sizeof(fe->overlay_ids[0]), entry->d_name);
+      unifrog_text_copy(fe->overlay_titles[fe->overlay_count],
+         sizeof(fe->overlay_titles[0]), title);
+      unifrog_log("frontend overlay pak name=%s title=%s\n", entry->d_name,
+         title);
+      fe->overlay_count++;
+      loaded++;
+   }
+   closedir(dir);
    return loaded;
 }

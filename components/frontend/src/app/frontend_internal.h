@@ -63,6 +63,8 @@
 #define FRONTEND_SCRIPT_ROOT UNIFROG_SCRIPT_ROOT
 #define FRONTEND_APP_ROOT UNIFROG_APP_ROOT
 #define FRONTEND_APP_PAK_MAX 24u
+/* Overlay paks are picked one at a time, so a short list is enough. */
+#define FRONTEND_OVERLAY_MAX 8u
 #define FRONTEND_THEME_ROOT UNIFROG_THEME_ROOT
 #define FRONTEND_LANGUAGE_ROOT UNIFROG_LANGUAGE_ROOT
 #define FRONTEND_FIRMWARE_ROOT UNIFROG_USER_FIRMWARE_ROOT
@@ -268,6 +270,10 @@ struct frontend_state {
    char resource_cache_key[64];
    char language_name[48];
    char artwork_layout[16];
+   char overlay_pak[32];
+   char overlay_ids[FRONTEND_OVERLAY_MAX][32];
+   char overlay_titles[FRONTEND_OVERLAY_MAX][48];
+   unsigned overlay_count;
    char artwork_box_templates[UNIFROG_ARTWORK_TEMPLATE_MAX];
    char artwork_preview_templates[UNIFROG_ARTWORK_TEMPLATE_MAX];
    char artwork_text_templates[UNIFROG_ARTWORK_TEMPLATE_MAX];
@@ -523,6 +529,7 @@ int install_update_archive(const char *archive_path, char *slot_name,
 int validate_update_archive(const char *archive_path, char *summary,
    size_t summary_size);
 unsigned frontend_paks_load(struct frontend_state *fe);
+unsigned frontend_overlays_load(struct frontend_state *fe);
 int frontend_paks_icon(const struct frontend_state *fe, unsigned item,
    char *out, size_t size);
 void mark_boot_ok(void);

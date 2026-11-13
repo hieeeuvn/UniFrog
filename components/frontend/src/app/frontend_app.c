@@ -830,6 +830,7 @@ int unifrog_frontend_app_init(void)
    unifrog_text_copy(fe->theme_name, sizeof(fe->theme_name),
       UNIFROG_DEFAULT_THEME_NAME);
    frontend_set_artwork_layout(fe, "muos");
+   unifrog_text_copy(fe->overlay_pak, sizeof(fe->overlay_pak), "off");
    unifrog_text_copy(fe->language_name, sizeof(fe->language_name),
       UNIFROG_DEFAULT_LANGUAGE_NAME);
    unifrog_text_copy(fe->device_board, sizeof(fe->device_board),

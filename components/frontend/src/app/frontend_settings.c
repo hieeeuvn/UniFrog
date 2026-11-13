@@ -368,6 +368,7 @@ static const struct frontend_setting_spec frontend_settings[] = {
    FE_TEXT("language_name", language_name),
    FE_TEXT("theme_name", theme_name),
    FE_TEXT("artwork_layout", artwork_layout),
+   FE_TEXT("overlay_pak", overlay_pak),
    FE_TEXT("artwork_box_templates", artwork_box_templates),
    FE_TEXT("artwork_preview_templates", artwork_preview_templates),
    FE_TEXT("artwork_text_templates", artwork_text_templates),
@@ -683,6 +684,12 @@ int save_settings(struct frontend_state *fe)
    fprintf(file, "artwork_preview_templates=%s\n",
       fe->artwork_preview_templates);
    fprintf(file, "artwork_text_templates=%s\n", fe->artwork_text_templates);
+   fprintf(file,
+      "\n# Game overlay pak drawn over gameplay. Point this at a folder under\n"
+      "# /unifrog_data/apps that holds an overlay.ini, or off. See\n"
+      "# docs/app-paks.md.\n");
+   fprintf(file, "overlay_pak=%s\n",
+      fe->overlay_pak[0] ? fe->overlay_pak : "off");
    fprintf(file, "\n# Hardware selection and SD-card behavior.\n"
       "# device_board: auto, sf2000, or gb300.\n"
       "# Storage profiles are runtime settings; the build boots with wide25.\n"
