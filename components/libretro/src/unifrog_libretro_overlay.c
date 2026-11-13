@@ -19,9 +19,20 @@
  *
  * See docs/app-paks.md.
  */
-#include "unifrog_libretro_internal.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <strings.h>
 
 #include <unifrog/achievements.h>
+#include <unifrog/battery.h>
+#include <unifrog/clock.h>
+#include <unifrog/config.h>
+#include <unifrog/gfx.h>
+#include <unifrog/log.h>
+#include <unifrog/paths.h>
+#include <unifrog/perf.h>
+#include <unifrog/text.h>
 
 #define OVERLAY_MAX_LINES 4u
 #define OVERLAY_TOKENS_PER_LINE 3u
