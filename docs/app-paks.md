@@ -68,6 +68,16 @@ Start from `paks/_template` in the repository, or copy the bundled
 There is no `setTimeout`, no network, and no promises. Do short batches of work
 and write partial results to a file so a slow card cannot lose everything.
 
+### Example: Achievements
+
+`paks/achievements` reads the definitions `ra_sync.mjs` already put on the card
+(`achievements/cache/<hash>.json`) and the unlocked ids
+(`achievements/earned/<hash>.txt`), then lists every cached game with its
+progress. Press **A** on a game to see each achievement, marked `[x]` when it is
+unlocked, with its points. Up/Down scrolls, L/R pages, **B** goes back, and
+**B** in the list leaves the tool. The in-game pause menu shows the same data
+for the game that is running; this pak is for browsing everything else.
+
 ### Example: Box Art Check
 
 `paks/artwork-coverage` reads `rom_root` from `unifrog.ini`, walks every system
@@ -96,7 +106,5 @@ extracted themselves.
 ## Planned
 
 - Installing a pak from a `.zip` in `unifrog_data/archive` without a computer.
-- A bundled achievements pak that shows the cached RetroAchievements definitions
-  and unlocked ids per game.
 - A bundled artwork pak that unpacks an artwork pack ZIP into the catalogue
   layout.
