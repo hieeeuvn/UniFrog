@@ -400,6 +400,7 @@ int sanitize_input_profile(int input_profile);
 unsigned present_flags_for_display_mode(int display_mode);
 /* Game overlay paks: reload the selection, then draw over the game frame. */
 void unifrog_libretro_overlay_begin(void);
+void unifrog_libretro_overlay_end(void);
 int unifrog_libretro_overlay_draw(struct unifrog_surface *surface,
    const struct unifrog_battery_status *battery);
 void host_configure_options(const struct unifrog_libretro_run_options *options);

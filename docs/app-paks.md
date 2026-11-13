@@ -89,22 +89,37 @@ list of games that still have no box art. Open that file with
 
 ## Overlay paks
 
-An overlay pak draws a small panel over a game while a core runs. It cannot use
-JS2300: the script runtime is either standalone, the launcher, or the core
-itself, so a third-party script cannot own a frame during somebody else's game.
-An overlay pak therefore only *describes* the panel, and the firmware draws it
-natively into the presenter buffer after every core frame.
+An overlay pak draws over a game while a core runs: a bezel such as a GBA or
+Game Boy frame, and optionally a small stats panel. It cannot use JS2300: the
+script runtime is either standalone, the launcher, or the core itself, so a
+third-party script cannot own a frame during somebody else's game. An overlay
+pak therefore only *describes* what to draw, and the firmware draws it natively
+into the presenter buffer every core frame.
 
 ```text
-unifrog_data/apps/overlay-stats
-└── overlay.ini        <- no app.ini, so it is not listed as a tool
+unifrog_data/apps/overlay-gba
+├── overlay.ini        <- no app.ini, so it is not listed as a tool
+└── frame.png          <- optional bezel
 ```
 
 | Key        | Meaning |
 | ---------- | ------- |
 | `title`    | Name shown in the selector. Defaults to the folder name. |
-| `position` | `top-left`, `top-right` (default), `bottom-left`, `bottom-right`. |
-| `line1`..`line4` | Up to three tokens each, comma separated. |
+| `image`    | PNG inside the pak, scaled to the whole screen. Pixels with alpha below 128 are skipped, so the transparent middle stays game. |
+| `position` | Panel corner: `top-left`, `top-right` (default), `bottom-left`, `bottom-right`. |
+| `line1`..`line4` | Panel lines, up to three tokens each, comma separated. |
+
+`image` and the `lineN` panel can be used together; the panel is drawn on top
+of the bezel. A pak with neither, or with a missing or unreadable image, is
+skipped and logged.
+
+The bezel is not blended per frame. At load the PNG is scaled once into runs of
+opaque pixels, and each frame only those runs are copied and written back. The
+shipped GBA frame covers 9,176 pixels, so a frame touches about 18 KiB instead
+of the 150 KiB a full framebuffer flush costs. A thin bezel with a large
+picture window is cheaper than a thick one; draw with hard edges, because
+semi-transparent pixels are treated as visible or skipped, never mixed with the
+game.
 
 Tokens:
 
@@ -116,9 +131,17 @@ Tokens:
 | `points`       | Achievement points earned in this game. |
 | `game`         | The achievement title of the running game. |
 
-Example, `paks/overlay-stats/overlay.ini`:
+Examples:
 
 ```ini
+# paks/overlay-gba/overlay.ini - a 320x240 frame with 13px bands, the letterbox
+# a 240x160 GBA image gets on this screen
+title=GBA Frame
+image=frame.png
+```
+
+```ini
+# paks/overlay-stats/overlay.ini - clock, battery and progress in a corner
 title=Stats
 position=top-right
 line1=clock
@@ -132,11 +155,12 @@ Turn it on with **Config -> Custom -> Game Overlay**, which cycles through
 overlay folders are skipped by the Apps list, and a selected pak that is deleted
 simply draws nothing.
 
-The panel is repainted every frame because the presenter rotates framebuffers,
+The overlay is repainted every frame because the presenter rotates framebuffers,
 but only its own rows are flushed to memory, so the cost is a few kilobytes
-instead of the whole 150 KiB frame. Keep the overlay to three or four short
-lines; the achievement unlock banner also uses the top of the screen, so prefer
-`bottom-right` if you play with achievements enabled.
+instead of the whole 150 KiB frame. System messages are drawn after the overlay:
+the achievement unlock banner (`ACHIEVEMENT UNLOCKED`, 38px tall at the top of
+the screen for `toast_ms`, 4s by default) and the low battery warning stay on
+top of a bezel instead of being cut by it.
 
 ## Security
 

@@ -133,10 +133,12 @@ và overlay pak vẽ đè lên game.
 - Pak kèm sẵn: `artwork-coverage` (kiểm tra box art, ghi report),
   `achievements` (xem tiến độ mọi game đã cache), `_template`, và
   `overlay-stats` (overlay pak).
-- Overlay pak (`overlay.ini`): `position` + `line1..line4` với token `clock`,
-  `battery`, `achievements`, `points`, `game`; firmware vẽ native lên frame game
-  sau mỗi frame và chỉ flush vùng panel. Bật bằng **Config → Custom → Game
-  Overlay**, lưu thành `overlay_pak` trong `unifrog.ini`.
+- Overlay pak (`overlay.ini`): `image=` cho viền kiểu GBA/GB (PNG full màn
+  hình, phần trong suốt là cửa sổ game) và/hoặc `position` + `line1..line4` với
+  token `clock`, `battery`, `achievements`, `points`, `game`. Firmware vẽ native
+  lên frame game sau mỗi frame, chỉ chép và flush các dải pixel thật sự vẽ; toast
+  achievement và cảnh báo pin yếu vẽ sau nên luôn nằm trên viền. Bật bằng
+  **Config → Custom → Game Overlay**, lưu thành `overlay_pak` trong `unifrog.ini`.
 - Tài liệu: `docs/app-paks.md`.
 
 ## Tài liệu và kiểm chứng

@@ -1175,9 +1175,13 @@ out_content_prepare:
             host.launch_core_id, host.launch_path);
          break;
       }
+      /*
+       * The pak overlay goes down first so the achievement toast and the low
+       * battery warning stay readable on top of a bezel.
+       */
+      host_draw_overlay_pak();
       host_update_battery_warning(unifrog_perf_time_ms());
       host_draw_achievement_toast();
-      host_draw_overlay_pak();
       run_count = unifrog_perf_elapsed(run_start, unifrog_perf_count());
       vsync_count = host.presenter_open && host.video_frames != video_before ?
          host.presenter.last_vsync_count : 0;
@@ -1257,6 +1261,7 @@ out_unload:
    unifrog_diag_memory_snapshot("libretro.out_unload");
    libretro_watchdog_stop();
    unifrog_achievements_end();
+   unifrog_libretro_overlay_end();
    achievements_core_api = NULL;
    if (game_loaded) {
       libretro_activity_set(core, path, UNIFROG_ACTIVITY_PHASE_SAVE_MEMORY,
