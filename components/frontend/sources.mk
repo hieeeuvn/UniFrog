@@ -18,6 +18,7 @@ FRONTEND_APP_SOURCES := \
 	components/frontend/src/app/frontend_launch.c \
 	components/frontend/src/app/frontend_maintenance.c \
 	components/frontend/src/app/frontend_model.c \
+	components/frontend/src/app/frontend_paks.c \
 	components/frontend/src/app/frontend_navigation.c \
 	components/frontend/src/app/frontend_paths.c \
 	components/frontend/src/app/frontend_preferences.c \

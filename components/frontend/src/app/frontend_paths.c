@@ -127,6 +127,7 @@ void frontend_ensure_data_dirs(void)
    (void)mkdir(FRONTEND_SCRIPT_ROOT, 0777);
    (void)mkdir(FRONTEND_ARCHIVE_ROOT, 0777);
    (void)mkdir(FRONTEND_THEME_ROOT, 0777);
+   (void)mkdir(UNIFROG_APP_ROOT, 0777);
    (void)mkdir(FRONTEND_LANGUAGE_ROOT, 0777);
    (void)mkdir(UNIFROG_FONT_ROOT, 0777);
    (void)mkdir(UNIFROG_ARTWORK_ROOT, 0777);

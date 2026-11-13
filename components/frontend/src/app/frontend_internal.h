@@ -61,6 +61,8 @@
 #define FRONTEND_ARCHIVE_ROOT UNIFROG_ARCHIVE_ROOT
 #define FRONTEND_STOCK_ARCHIVE_ROOT FRONTEND_ROOT "/ARCHIVE"
 #define FRONTEND_SCRIPT_ROOT UNIFROG_SCRIPT_ROOT
+#define FRONTEND_APP_ROOT UNIFROG_APP_ROOT
+#define FRONTEND_APP_PAK_MAX 24u
 #define FRONTEND_THEME_ROOT UNIFROG_THEME_ROOT
 #define FRONTEND_LANGUAGE_ROOT UNIFROG_LANGUAGE_ROOT
 #define FRONTEND_FIRMWARE_ROOT UNIFROG_USER_FIRMWARE_ROOT
@@ -142,6 +144,7 @@ enum frontend_item_kind {
    FRONTEND_ITEM_UPDATE_ARCHIVE,
    FRONTEND_ITEM_VERSION,
    FRONTEND_ITEM_CORE_MODULE,
+   FRONTEND_ITEM_APP,
 };
 
 struct frontend_association {
@@ -201,6 +204,9 @@ struct frontend_state {
    char item_glyph_path[FRONTEND_MAX_ITEMS][FRONTEND_MAX_PATH];
    const char *item_glyph[FRONTEND_MAX_ITEMS];
    uint8_t item_glyph_resolved[FRONTEND_MAX_ITEMS];
+   unsigned pak_icon_count;
+   unsigned pak_icon_item[FRONTEND_APP_PAK_MAX];
+   char pak_icon_path[FRONTEND_APP_PAK_MAX][FRONTEND_MAX_PATH];
    uint16_t item_dedupe[FRONTEND_ITEM_DEDUPE_SLOTS];
    unsigned item_generation;
    unsigned glyph_cache_generation;
@@ -516,6 +522,9 @@ int install_update_archive(const char *archive_path, char *slot_name,
    size_t slot_name_size);
 int validate_update_archive(const char *archive_path, char *summary,
    size_t summary_size);
+unsigned frontend_paks_load(struct frontend_state *fe);
+int frontend_paks_icon(const struct frontend_state *fe, unsigned item,
+   char *out, size_t size);
 void mark_boot_ok(void);
 int activate_installed_version(const char *slot);
 

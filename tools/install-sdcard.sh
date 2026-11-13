@@ -79,5 +79,13 @@ if [ -n "${SCRIPT_FILES:-}" ]; then
 		cp "$script" "$target"
 	done
 fi
+if [ -n "${PAK_FILES:-}" ]; then
+	for pak in $PAK_FILES; do
+		relative=${pak#"$PAK_ROOT"/}
+		target="$SDCARD_USER_DIR/apps/$relative"
+		mkdir -p "$(dirname "$target")"
+		cp "$pak" "$target"
+	done
+fi
 
 sync

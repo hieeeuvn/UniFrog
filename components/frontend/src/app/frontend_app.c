@@ -501,6 +501,11 @@ static void activate(struct frontend_state *fe)
       frontend_launch_script(fe, &item);
       return;
    }
+   if (item.kind == FRONTEND_ITEM_APP) {
+      /* A pak is a JS2300 entry script, so it launches exactly like a script. */
+      frontend_launch_script(fe, &item);
+      return;
+   }
    if (item.kind == FRONTEND_ITEM_FIRMWARE) {
       char rel[FRONTEND_MAX_PATH];
       int supported;

@@ -762,6 +762,8 @@ void fill_visible_item_glyphs(struct frontend_state *fe,
       if (theme_glyph_path(fe, module, item_glyph_key(&fe->items[i]),
           paths[i], FRONTEND_MAX_PATH) == 0)
          glyphs[i] = paths[i];
+      else if (frontend_paks_icon(fe, i, paths[i], FRONTEND_MAX_PATH) == 0)
+         glyphs[i] = paths[i];
       else
          glyphs[i] = NULL;
    }

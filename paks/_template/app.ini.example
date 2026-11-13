@@ -1,0 +1,10 @@
+# Copy this file to app.ini to turn the folder into an app pak.
+#
+# title  label in the Apps list (default: folder name)
+# info   one-line hint under the label (default: "app pak")
+# icon   optional image inside this folder, shown in the list
+# entry  JS2300 script to run (default: main.js)
+title=My Tool
+info=what it does
+# icon=icon.png
+entry=main.js

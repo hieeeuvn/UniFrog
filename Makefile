@@ -54,6 +54,8 @@ LANGUAGE_FILES := $(wildcard languages/*.ini)
 FONT_FILES := $(wildcard fonts/*)
 SCRIPT_ROOT := js2300/scripts
 SCRIPT_FILES := $(shell find $(SCRIPT_ROOT) -type f 2>/dev/null | sort)
+PAK_ROOT := paks
+PAK_FILES := $(shell find $(PAK_ROOT) -type f 2>/dev/null | sort)
 SDCARD_BIOS_PACKAGE := $(OUT)/sdcard/bios/bisrv.asd
 SDCARD_FIRMWARE_PACKAGE := $(OUT)/sdcard/unifrog/firmware/unifrog.bin
 SDZIP ?= $(OUT)/UniFrog-sdcard.zip
@@ -1203,6 +1205,7 @@ $(FRONTEND_PACKAGE_STAMP): \
 		FROGUI_FONT_FILES="$(FROGUI_FONT_FILES)" \
 		SCRIPT_ROOT="$(SCRIPT_ROOT)" \
 		SCRIPT_FILES="$(SCRIPT_FILES)" \
+		PAK_ROOT="$(PAK_ROOT)" PAK_FILES="$(PAK_FILES)" \
 		UNIFROG_GIT_COMMIT="$(UNIFROG_GIT_COMMIT)" \
 		UNIFROG_GIT_DIRTY="$(UNIFROG_GIT_DIRTY)" \
 		UNIFROG_SDK_GIT_COMMIT="$(UNIFROG_SDK_GIT_COMMIT)" \
@@ -1728,6 +1731,7 @@ install: fastboot-check layout-check
 		LANGUAGE_FILES="$(LANGUAGE_FILES)" FONT_FILES="$(FONT_FILES)" \
 		SCRIPT_ROOT="$(SCRIPT_ROOT)" \
 		SCRIPT_FILES="$(SCRIPT_FILES)" \
+		PAK_ROOT="$(PAK_ROOT)" PAK_FILES="$(PAK_FILES)" \
 		BUILD_PROGRESS="$(BUILD_PROGRESS)" sh tools/install-sdcard.sh
 
 rebuild:

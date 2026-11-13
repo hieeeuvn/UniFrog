@@ -39,6 +39,8 @@ void frontend_show_apps(struct frontend_state *fe)
       NULL);
    add_item(fe, "Power", "battery", FRONTEND_ITEM_ACTION, "power", NULL);
    add_item(fe, "SysInfo", "device", FRONTEND_ITEM_ACTION, "sysinfo", NULL);
+   if (frontend_paks_load(fe) > 0)
+      add_info(fe, "App paks", "add tools in /unifrog_data/apps");
    add_item(fe, "Back", "launcher", FRONTEND_ITEM_ACTION, "back", NULL);
 }
 

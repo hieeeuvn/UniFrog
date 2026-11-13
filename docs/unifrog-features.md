@@ -61,6 +61,9 @@ If you copy or remove files in those locations, Unifrog updates with them.
 - Open built-in tools and helper screens.
 - Browse and play videos, music, and images from Apps -> Media Player.
 - Run optional local scripts stored on the SD card.
+- Add tools as app paks: a folder under `unifrog_data/apps` with an `app.ini`
+  and a JS2300 script appears in Apps without rebuilding the firmware. See
+  [app-paks.md](app-paks.md).
 - Keep scripted actions separate from core launcher content.
 
 ### Launch defaults
